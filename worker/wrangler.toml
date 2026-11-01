@@ -1,0 +1,14 @@
+name = "finanzas-worker"
+main = "src/index.ts"
+compatibility_date = "2024-04-01"
+
+# ── Cloudflare D1 Database Binding ────────────────────────────────────────────
+# Para vincular tu base de datos:
+# 1. Ejecuta: npx wrangler d1 create finanzas-db
+# 2. Copia el database_id obtenido y pégalo abajo
+# 3. Aplica las migraciones: npx wrangler d1 execute finanzas-db --file=../schema.sql
+[[d1_databases]]
+binding = "DB"
+database_name = "finanzas-db"
+database_id = "72bb17da-523d-4944-84c7-3f58aea70ae2"
+
