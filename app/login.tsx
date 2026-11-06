@@ -80,9 +80,21 @@ export default function LoginScreen() {
     setInfoMsg(null);
 
     if (Platform.OS !== "web") {
-      setErrorMsg(
-        "En la app móvil usa tu correo y contraseña (o vincula una contraseña desde la versión web).",
-      );
+      const cleanEmail = email.trim();
+      if (cleanEmail) {
+        try {
+          await sendPasswordResetEmail(auth, cleanEmail);
+          setInfoMsg(
+            `Te enviamos un enlace a ${cleanEmail}. Crea una contraseña ahí para entrar a tu misma cuenta de Google desde el APK.`,
+          );
+        } catch (err: any) {
+          setErrorMsg(translateFirebaseError(err?.code));
+        }
+      } else {
+        setInfoMsg(
+          "Para usar tu misma cuenta de Google en el APK sin configurar SHA-1 en Google Cloud, escribe tu Gmail arriba y toca '¿Olvidaste tu contraseña?' (o este botón) para asignarle una contraseña.",
+        );
+      }
       return;
     }
 
@@ -264,33 +276,31 @@ export default function LoginScreen() {
             />
           </Card>
 
-          {/* ── Acceso rápido con Google (Web) ────────────────── */}
-          {Platform.OS === "web" && (
-            <View className="gap-3">
-              <View className="flex-row items-center gap-3">
-                <View className="flex-1 h-[1px] bg-surface-600" />
-                <Typography variant="caption" muted>
-                  o continúa con
-                </Typography>
-                <View className="flex-1 h-[1px] bg-surface-600" />
-              </View>
-
-              <Pressable
-                onPress={handleGoogleSignIn}
-                disabled={googleLoading}
-                className="flex-row items-center justify-center gap-2.5 bg-surface-800 border border-surface-600 py-3.5 px-4 rounded-2xl active:bg-surface-700"
-              >
-                <MaterialCommunityIcons
-                  name="google"
-                  size={20}
-                  color={colors.primary[600]}
-                />
-                <Typography className="font-semibold text-text-primary">
-                  {googleLoading ? "Conectando..." : "Continuar con Google"}
-                </Typography>
-              </Pressable>
+          {/* ── Acceso rápido con Google ───────────────────────── */}
+          <View className="gap-3">
+            <View className="flex-row items-center gap-3">
+              <View className="flex-1 h-[1px] bg-surface-600" />
+              <Typography variant="caption" muted>
+                o continúa con
+              </Typography>
+              <View className="flex-1 h-[1px] bg-surface-600" />
             </View>
-          )}
+
+            <Pressable
+              onPress={handleGoogleSignIn}
+              disabled={googleLoading}
+              className="flex-row items-center justify-center gap-2.5 bg-surface-800 border border-surface-600 py-3.5 px-4 rounded-2xl active:bg-surface-700"
+            >
+              <MaterialCommunityIcons
+                name="google"
+                size={20}
+                color={colors.primary[600]}
+              />
+              <Typography className="font-semibold text-text-primary">
+                {googleLoading ? "Conectando..." : "Continuar con Google"}
+              </Typography>
+            </Pressable>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
