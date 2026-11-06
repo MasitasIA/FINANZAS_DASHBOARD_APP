@@ -9,16 +9,16 @@
       "distribution": "internal",
       "channel": "development"
     },
-    "preview": {
-      "distribution": "internal",
-      "channel": "preview",
+    "production": {
+      "channel": "production",
+      "environment": "production",
+      "autoIncrement": true,
       "android": {
         "buildType": "apk"
       }
     },
-    "production": {
-      "channel": "production",
-      "autoIncrement": true,
+    "production-aab": {
+      "extends": "production",
       "android": {
         "buildType": "app-bundle"
       }

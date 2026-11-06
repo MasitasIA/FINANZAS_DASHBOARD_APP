@@ -17,7 +17,10 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.unpo.finanzas"
+      "bundleIdentifier": "com.unpo.finanzas",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -27,7 +30,6 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "package": "com.unpo.finanzas",
-      "versionCode": 1,
       "predictiveBackGestureEnabled": false
     },
     "web": {
