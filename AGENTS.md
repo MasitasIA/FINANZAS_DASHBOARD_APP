@@ -63,6 +63,7 @@ finanzas_dashboard/
 │   ├── accounts/[id].tsx         ← Account detail + recent transactions
 │   ├── accounts/new.tsx          ← New account modal (presentation: "modal")
 │   ├── goals/[id].tsx            ← Goal detail + progress
+│   ├── goals/new.tsx             ← New goal modal (presentation: "modal")
 │   └── transaction/new.tsx       ← New transaction modal (presentation: "modal")
 │
 └── src/                          ← All non-route code lives here
@@ -74,20 +75,22 @@ finanzas_dashboard/
     │       └── handlers.ts       ← Mock implementations of every API endpoint
     ├── services/                 ← Data access layer (calls api.ts OR mock handlers)
     │   ├── accounts.service.ts
+    │   ├── categories.service.ts
     │   ├── transactions.service.ts
     │   └── goals.service.ts      ← Also contains reportsService
     ├── hooks/                    ← TanStack Query hooks (queries + mutations)
     │   ├── useAccounts.ts
+    │   ├── useCategories.ts
     │   ├── useTransactions.ts
-    │   └── useGoals.ts           ← Also contains useMonthlyReport
+    │   └── useGoals.ts           ← Also contains useMonthlyReport & useAnnualReport
     ├── store/                    ← Zustand stores (UI-only state)
-    │   ├── accounts.store.ts
     │   └── reports.store.ts
     ├── components/
     │   ├── ui/                   ← Design system primitives
     │   │   ├── Typography.tsx    ← variant prop: h1/h2/h3/body/caption/label
     │   │   ├── Button.tsx        ← variant: primary/secondary/ghost/danger
     │   │   ├── Card.tsx          ← Surface with rounded corners
+    │   │   ├── PieChart.tsx      ← Interactive SVG donut/pie chart
     │   │   └── index.ts          ← Barrel export
     │   ├── accounts/AccountCard.tsx
     │   └── goals/GoalCard.tsx

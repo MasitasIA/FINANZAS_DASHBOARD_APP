@@ -2,11 +2,13 @@ import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { signOut } from "firebase/auth";
 import { Typography } from "@/components/ui";
 import { AccountCard } from "@/components/accounts/AccountCard";
 import { GoalCard } from "@/components/goals/GoalCard";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useGoals } from "@/hooks/useGoals";
+import { auth } from "@/lib/firebase";
 import { formatCurrency } from "@/utils/formatters";
 import { colors } from "../../tailwind.config";
 
@@ -57,6 +59,41 @@ export default function DashboardScreen() {
       >
         {/* ── Header: Multi-Moneda ───────────────────────────── */}
         <View className="pt-6 pb-6">
+          {auth.currentUser && (
+            <View className="flex-row items-center justify-between mb-4 bg-surface-800 border border-surface-600/60 px-3.5 py-2 rounded-2xl">
+              <View className="flex-row items-center gap-2 flex-1 mr-2">
+                <MaterialCommunityIcons
+                  name="account-circle-outline"
+                  size={20}
+                  color={colors.primary[600]}
+                />
+                <Typography
+                  variant="caption"
+                  numberOfLines={1}
+                  className="font-medium text-text-primary flex-1"
+                >
+                  {auth.currentUser.displayName || auth.currentUser.email}
+                </Typography>
+              </View>
+              <Pressable
+                onPress={() => signOut(auth)}
+                className="flex-row items-center gap-1 px-2.5 py-1 rounded-xl bg-surface-700 active:bg-surface-600"
+              >
+                <MaterialCommunityIcons
+                  name="logout"
+                  size={14}
+                  color={colors.text.secondary}
+                />
+                <Typography
+                  variant="caption"
+                  className="font-semibold text-text-secondary"
+                >
+                  Salir
+                </Typography>
+              </Pressable>
+            </View>
+          )}
+
           <View className="flex-row items-center justify-between mb-3">
             <Typography
               variant="caption"
@@ -79,7 +116,11 @@ export default function DashboardScreen() {
 
           {displayCurrencies.length === 1 ? (
             <View>
-              <Typography className="text-4xl font-bold text-text-primary">
+              <Typography
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                className="text-4xl font-bold text-text-primary"
+              >
                 {formatCurrency(
                   balancesByCurrency[displayCurrencies[0]] ?? 0,
                   displayCurrencies[0] as any,
@@ -120,6 +161,8 @@ export default function DashboardScreen() {
                       </View>
                     </View>
                     <Typography
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
                       className={`text-xl font-bold ${
                         bal >= 0 ? "text-text-primary" : "text-danger-500"
                       }`}

@@ -41,17 +41,21 @@ export function AccountCard({ account, onPress }: AccountCardProps) {
           </View>
 
           {/* Info */}
-          <View className="flex-1">
-            <Typography variant="h3">{account.name}</Typography>
-            <Typography variant="caption" className="mt-0.5" muted>
+          <View className="flex-1 min-w-0">
+            <Typography variant="h3" numberOfLines={1}>
+              {account.name}
+            </Typography>
+            <Typography variant="caption" className="mt-0.5" muted numberOfLines={1}>
               {TYPE_LABELS[account.type] ?? account.type}
             </Typography>
           </View>
 
           {/* Balance / Consumo */}
-          <View className="items-end">
+          <View className="items-end shrink-0 max-w-[55%]">
             <Typography
               variant="h3"
+              numberOfLines={1}
+              adjustsFontSizeToFit
               className={
                 isCredit
                   ? debt > 0
@@ -77,7 +81,7 @@ export function AccountCard({ account, onPress }: AccountCardProps) {
           <View className="pt-2 border-t border-surface-700/60 gap-2">
             {limit > 0 && (
               <>
-                <View className="flex-row justify-between items-center">
+                <View className="flex-row flex-wrap justify-between items-center gap-x-2 gap-y-1">
                   <Typography variant="caption" muted>
                     Disponible:{" "}
                     <Typography variant="caption" className="font-semibold text-text-primary">

@@ -141,12 +141,16 @@ export default function AccountsScreen() {
                 </View>
               </View>
 
-              <View className="flex-row gap-3">
-                <View className="flex-1 bg-surface-700/50 p-3 rounded-xl">
+              <View className="flex-row flex-wrap gap-3">
+                <View className="flex-1 min-w-[130px] bg-surface-700/50 p-3 rounded-xl">
                   <Typography variant="caption" muted>
                     Disponible
                   </Typography>
-                  <Typography className="text-lg font-bold text-success-500 mt-0.5">
+                  <Typography
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    className="text-lg font-bold text-success-500 mt-0.5"
+                  >
                     {formatCurrency(item.available, item.currency)}
                   </Typography>
                   {item.savedInGoals > 0 && (
@@ -156,11 +160,15 @@ export default function AccountsScreen() {
                   )}
                 </View>
 
-                <View className="flex-1 bg-surface-700/50 p-3 rounded-xl">
+                <View className="flex-1 min-w-[130px] bg-surface-700/50 p-3 rounded-xl">
                   <Typography variant="caption" muted>
                     Deuda tarjetas
                   </Typography>
-                  <Typography className="text-lg font-bold text-warning-500 mt-0.5">
+                  <Typography
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    className="text-lg font-bold text-warning-500 mt-0.5"
+                  >
                     {formatCurrency(item.debt, item.currency)}
                   </Typography>
                 </View>

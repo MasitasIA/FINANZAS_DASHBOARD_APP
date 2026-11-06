@@ -30,8 +30,10 @@ export function GoalCard({ goal, onPress }: GoalCardProps) {
               color={goal.color}
             />
           </View>
-          <View className="flex-1">
-            <Typography variant="h3">{goal.name}</Typography>
+          <View className="flex-1 min-w-0">
+            <Typography variant="h3" numberOfLines={1}>
+              {goal.name}
+            </Typography>
             {goal.deadline && (
               <Typography variant="caption">
                 {new Date(goal.deadline).toLocaleDateString("es-AR", {
@@ -41,7 +43,7 @@ export function GoalCard({ goal, onPress }: GoalCardProps) {
               </Typography>
             )}
           </View>
-          <View className="items-end">
+          <View className="items-end shrink-0">
             <Typography variant="h3" style={{ color: goal.color }}>
               {Math.round(progress)}%
             </Typography>
@@ -57,11 +59,11 @@ export function GoalCard({ goal, onPress }: GoalCardProps) {
         </View>
 
         {/* Amounts */}
-        <View className="flex-row justify-between">
-          <Typography variant="caption">
+        <View className="flex-row flex-wrap justify-between gap-x-2 gap-y-1">
+          <Typography variant="caption" numberOfLines={1}>
             {formatCurrency(goal.currentAmount, goal.currency)} ahorrados
           </Typography>
-          <Typography variant="caption">
+          <Typography variant="caption" numberOfLines={1}>
             Meta: {formatCurrency(goal.targetAmount, goal.currency)}
           </Typography>
         </View>

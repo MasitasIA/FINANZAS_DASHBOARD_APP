@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -13,138 +14,9 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Button, Card, Typography } from "@/components/ui";
 import { useCreateTransaction } from "@/hooks/useTransactions";
 import { useAccounts } from "@/hooks/useAccounts";
+import { useCategories } from "@/hooks/useCategories";
 import type { TransactionType, Currency } from "@/types";
 import { colors } from "../../tailwind.config";
-
-interface CategoryOption {
-  id: string;
-  name: string;
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
-  color: string;
-}
-
-const CATEGORIES: Record<TransactionType, CategoryOption[]> = {
-  expense: [
-    {
-      id: "cat-leisure",
-      name: "Ocio",
-      icon: "gamepad-variant",
-      color: colors.accent.violet,
-    },
-    {
-      id: "cat-services",
-      name: "Servicios",
-      icon: "lightning-bolt",
-      color: colors.warning[400],
-    },
-    {
-      id: "cat-studies",
-      name: "Estudios",
-      icon: "school",
-      color: colors.accent.cyan,
-    },
-    {
-      id: "cat-food",
-      name: "Comida",
-      icon: "food-fork-drink",
-      color: colors.danger[400],
-    },
-    {
-      id: "cat-transport",
-      name: "Transporte",
-      icon: "car",
-      color: colors.accent.indigo,
-    },
-    {
-      id: "cat-health",
-      name: "Salud",
-      icon: "heart-pulse",
-      color: colors.success[400],
-    },
-    {
-      id: "cat-housing",
-      name: "Vivienda",
-      icon: "home",
-      color: colors.primary[400],
-    },
-    {
-      id: "cat-other-exp",
-      name: "Otros",
-      icon: "dots-horizontal",
-      color: colors.text.secondary,
-    },
-  ],
-  income: [
-    {
-      id: "cat-salary",
-      name: "Trabajo",
-      icon: "briefcase",
-      color: colors.success[500],
-    },
-    {
-      id: "cat-grant",
-      name: "Beca",
-      icon: "school",
-      color: colors.accent.cyan,
-    },
-    {
-      id: "cat-contribution",
-      name: "Aporte",
-      icon: "hand-coin",
-      color: colors.accent.purple,
-    },
-    {
-      id: "cat-pension",
-      name: "Pensión",
-      icon: "shield-account",
-      color: colors.accent.indigo,
-    },
-    {
-      id: "cat-freelance",
-      name: "Freelance",
-      icon: "laptop",
-      color: colors.primary[500],
-    },
-    {
-      id: "cat-investment",
-      name: "Inversión",
-      icon: "chart-line",
-      color: colors.success[400],
-    },
-    {
-      id: "cat-other-inc",
-      name: "Otros",
-      icon: "cash-plus",
-      color: colors.text.secondary,
-    },
-  ],
-  transfer: [
-    {
-      id: "cat-transfer",
-      name: "Entre cuentas",
-      icon: "swap-horizontal",
-      color: colors.accent.slate,
-    },
-    {
-      id: "cat-card-payment",
-      name: "Pago de tarjeta",
-      icon: "credit-card-check",
-      color: colors.accent.pink,
-    },
-    {
-      id: "cat-family-transfer",
-      name: "Aporte familiar",
-      icon: "account-group",
-      color: colors.accent.purple,
-    },
-    {
-      id: "cat-savings",
-      name: "Ahorro",
-      icon: "piggy-bank",
-      color: colors.success[500],
-    },
-  ],
-};
 
 export default function NewTransactionScreen() {
   const params = useLocalSearchParams<{
@@ -155,8 +27,8 @@ export default function NewTransactionScreen() {
   const initialType: TransactionType = params.type ?? "expense";
   const [type, setType] = useState<TransactionType>(initialType);
   const [amount, setAmount] = useState("");
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string>(
-    CATEGORIES[initialType][0]?.id ?? "cat-leisure",
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(
+    null,
   );
   const [detail, setDetail] = useState("");
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(
@@ -168,6 +40,10 @@ export default function NewTransactionScreen() {
 
   const { data: accountsData } = useAccounts();
   const accounts = accountsData?.data ?? [];
+
+  const { data: categoriesData, isLoading: loadingCategories } =
+    useCategories();
+  const allCategories = categoriesData?.data ?? [];
 
   const isTransfer = type === "transfer";
 
@@ -192,17 +68,15 @@ export default function NewTransactionScreen() {
   const { mutate, isPending } = useCreateTransaction();
 
   const toAccount = accounts.find((a) => a.id === activeToAccountId);
-  const currentCategories = CATEGORIES[type];
+  const currentCategories = allCategories.filter((c) => c.type === type);
   const selectedCat =
     currentCategories.find((c) => c.id === selectedCategoryId) ??
     currentCategories[0];
 
   const handleTypeChange = (newType: TransactionType) => {
     setType(newType);
-    const firstCat = CATEGORIES[newType][0];
-    if (firstCat) {
-      setSelectedCategoryId(firstCat.id);
-    }
+    const firstCat = allCategories.find((c) => c.type === newType);
+    setSelectedCategoryId(firstCat?.id ?? null);
   };
 
   const parsedAmount = parseFloat(amount.replace(",", "."));
@@ -211,14 +85,15 @@ export default function NewTransactionScreen() {
     isNaN(parsedAmount) ||
     parsedAmount <= 0 ||
     !activeAccountId ||
+    !selectedCat ||
     (isTransfer &&
       (!activeToAccountId || activeToAccountId === activeAccountId));
 
   const handleSubmit = () => {
-    if (isSubmitDisabled) return;
+    if (isSubmitDisabled || !selectedCat || !activeAccountId) return;
 
     const categoryName =
-      selectedCat?.name ?? (isTransfer ? "Transferencia" : "Transacción");
+      selectedCat.name ?? (isTransfer ? "Transferencia" : "Transacción");
     const trimmedDetail = detail.trim();
     const finalDescription = trimmedDetail
       ? `${categoryName} - ${trimmedDetail}`
@@ -315,46 +190,55 @@ export default function NewTransactionScreen() {
               </Typography>
             </View>
 
-            <View className="flex-row flex-wrap gap-2">
-              {currentCategories.map((cat) => {
-                const isSelected = selectedCategoryId === cat.id;
-                return (
-                  <Pressable
-                    key={cat.id}
-                    onPress={() => setSelectedCategoryId(cat.id)}
-                    className={`flex-row items-center px-3 py-2 rounded-2xl gap-2 border ${
-                      isSelected
-                        ? "bg-primary-50 border-primary-600"
-                        : "bg-surface-700/60 border-transparent active:bg-surface-600"
-                    }`}
-                  >
-                    <View
-                      className="w-6 h-6 rounded-lg items-center justify-center"
-                      style={{
-                        backgroundColor: isSelected
-                          ? cat.color
-                          : cat.color + "25",
-                      }}
-                    >
-                      <MaterialCommunityIcons
-                        name={cat.icon}
-                        size={14}
-                        color={isSelected ? colors.white : cat.color}
-                      />
-                    </View>
-                    <Typography
-                      className={`text-sm ${
+            {loadingCategories ? (
+              <View className="py-4 items-center">
+                <ActivityIndicator color={colors.primary[500]} />
+              </View>
+            ) : (
+              <View className="flex-row flex-wrap gap-2">
+                {currentCategories.map((cat) => {
+                  const isSelected = selectedCat?.id === cat.id;
+                  return (
+                    <Pressable
+                      key={cat.id}
+                      onPress={() => setSelectedCategoryId(cat.id)}
+                      className={`flex-row items-center px-3 py-2 rounded-2xl gap-2 border ${
                         isSelected
-                          ? "font-semibold text-primary-700"
-                          : "text-text-primary"
+                          ? "bg-primary-50 border-primary-600"
+                          : "bg-surface-700/60 border-transparent active:bg-surface-600"
                       }`}
                     >
-                      {cat.name}
-                    </Typography>
-                  </Pressable>
-                );
-              })}
-            </View>
+                      <View
+                        className="w-6 h-6 rounded-lg items-center justify-center"
+                        style={{
+                          backgroundColor: isSelected
+                            ? cat.color
+                            : cat.color + "25",
+                        }}
+                      >
+                        <MaterialCommunityIcons
+                          name={
+                            (cat.icon as keyof typeof MaterialCommunityIcons.glyphMap) ||
+                            "tag"
+                          }
+                          size={14}
+                          color={isSelected ? colors.white : cat.color}
+                        />
+                      </View>
+                      <Typography
+                        className={`text-sm ${
+                          isSelected
+                            ? "font-semibold text-primary-700"
+                            : "text-text-primary"
+                        }`}
+                      >
+                        {cat.name}
+                      </Typography>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
           </Card>
 
           {/* ── Detalle adicional (opcional) ─────────────────── */}

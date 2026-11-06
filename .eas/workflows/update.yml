@@ -1,0 +1,14 @@
+name: Publicar actualizacion OTA (Produccion)
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  publish_production_update:
+    name: EAS Update (Production)
+    type: update
+    params:
+      branch: production
+

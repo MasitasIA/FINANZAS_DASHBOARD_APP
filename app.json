@@ -1,15 +1,23 @@
 {
   "expo": {
-    "name": "Finanzas",
+    "name": "UNPO: Finanzas",
     "slug": "finanzas_dashboard",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "scheme": "finanzas",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/855989f3-b75f-4790-8b3a-ce30105e7be6",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.personal.finanzas"
+      "bundleIdentifier": "com.unpo.finanzas"
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +26,7 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "package": "com.personal.finanzas",
+      "package": "com.unpo.finanzas",
       "versionCode": 1,
       "predictiveBackGestureEnabled": false
     },
@@ -29,12 +37,6 @@
     "plugins": [
       "expo-router",
       "expo-font",
-      [
-        "expo-sqlite",
-        {
-          "enableFTS": true
-        }
-      ],
       [
         "expo-navigation-bar",
         {

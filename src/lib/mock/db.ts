@@ -78,6 +78,7 @@ export const mockCategories: Category[] = [
   { id: "cat-pension",      name: "Pensión",        icon: "shield-account",             color: colors.accent.indigo,  type: "income",   isDefault: true },
   { id: "cat-freelance",    name: "Freelance",      icon: "laptop",                     color: colors.primary[500],   type: "income",   isDefault: true },
   { id: "cat-investment",   name: "Inversión",      icon: "chart-line",                 color: colors.success[400],   type: "income",   isDefault: true },
+  { id: "cat-yield",        name: "Rendimientos",   icon: "trending-up",                color: "#34d399",             type: "income",   isDefault: true },
   { id: "cat-other-inc",    name: "Otros",          icon: "cash-plus",                  color: colors.text.secondary, type: "income",   isDefault: false },
 
   // Transferencias

@@ -1,12 +1,11 @@
 /**
  * Cloudflare D1 — esquema SQL inicial
- * Ejecuta este archivo en tu base D1 con:
- *   wrangler d1 execute finanzas-db --file=./schema.sql
  */
 
 -- ── Cuentas ──────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS accounts (
   id           TEXT    PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  user_id      TEXT    NOT NULL DEFAULT 'legacy',
   name         TEXT    NOT NULL,
   type         TEXT    NOT NULL CHECK (type IN ('checking','savings','investment','cash','credit')),
   currency     TEXT    NOT NULL DEFAULT 'ARS' CHECK (currency IN ('ARS','USD','EUR')),
@@ -19,6 +18,8 @@ CREATE TABLE IF NOT EXISTS accounts (
   created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
   updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id);
 
 -- ── Categorías ───────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS categories (
@@ -46,6 +47,7 @@ INSERT OR IGNORE INTO categories (id, name, icon, color, type, is_default) VALUE
   ('cat-pension',         'Pensión',           'shield-account',   '#8098f9', 'income',   1),
   ('cat-freelance',       'Freelance',         'laptop',           '#e23d28', 'income',   1),
   ('cat-investment',      'Inversión',         'chart-line',       '#47cd89', 'income',   1),
+  ('cat-yield',           'Rendimientos',      'trending-up',      '#34d399', 'income',   1),
   ('cat-other-inc',       'Otros',             'cash-plus',        '#68615e', 'income',   0),
   ('cat-transfer',        'Entre cuentas',     'swap-horizontal',  '#9ea4c1', 'transfer', 1),
   ('cat-card-payment',    'Pago de tarjeta',   'credit-card-check','#ec4899', 'transfer', 1),
@@ -55,6 +57,7 @@ INSERT OR IGNORE INTO categories (id, name, icon, color, type, is_default) VALUE
 -- ── Transacciones ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS transactions (
   id            TEXT    PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  user_id       TEXT    NOT NULL DEFAULT 'legacy',
   account_id    TEXT    NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   category_id   TEXT    NOT NULL REFERENCES categories(id),
   type          TEXT    NOT NULL CHECK (type IN ('income','expense','transfer')),
@@ -69,6 +72,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE INDEX IF NOT EXISTS idx_transactions_user    ON transactions(user_id, date DESC);
 CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_date    ON transactions(date DESC);
 CREATE INDEX IF NOT EXISTS idx_transactions_type    ON transactions(type);
@@ -77,6 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_goal    ON transactions(goal_id);
 -- ── Metas de ahorro ───────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS savings_goals (
   id             TEXT    PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  user_id        TEXT    NOT NULL DEFAULT 'legacy',
   name           TEXT    NOT NULL,
   target_amount  REAL    NOT NULL CHECK (target_amount > 0),
   current_amount REAL    NOT NULL DEFAULT 0,
@@ -88,6 +93,8 @@ CREATE TABLE IF NOT EXISTS savings_goals (
   created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
   updated_at     TEXT    NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_goals_user ON savings_goals(user_id);
 
 -- ── Triggers: actualizar balance en cuentas y metas ─────────────────────────
 

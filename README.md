@@ -26,13 +26,13 @@ Aplicación móvil moderna de finanzas personales desarrollada con **React Nativ
 
 ## 🛠️ Stack Tecnológico
 
-| Capa | Tecnología |
-| --- | --- |
-| **Framework Móvil** | [Expo SDK 58](https://expo.dev/) + [React Native 0.88](https://reactnative.dev/) |
-| **Enrutamiento** | [Expo Router v4](https://docs.expo.dev/router/introduction/) |
-| **Estilos** | [NativeWind v4](https://www.nativewind.dev/) (Tailwind CSS) |
-| **Estado del Servidor** | [TanStack Query v5](https://tanstack.com/query/latest) |
-| **Estado del Cliente** | [Zustand v5](https://github.com/pmndrs/zustand) |
+| Capa                        | Tecnología                                                                                                              |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **Framework Móvil**         | [Expo SDK 58](https://expo.dev/) + [React Native 0.88](https://reactnative.dev/)                                        |
+| **Enrutamiento**            | [Expo Router v4](https://docs.expo.dev/router/introduction/)                                                            |
+| **Estilos**                 | [NativeWind v4](https://www.nativewind.dev/) (Tailwind CSS)                                                             |
+| **Estado del Servidor**     | [TanStack Query v5](https://tanstack.com/query/latest)                                                                  |
+| **Estado del Cliente**      | [Zustand v5](https://github.com/pmndrs/zustand)                                                                         |
 | **Backend & Base de Datos** | [Cloudflare Workers](https://workers.cloudflare.com/) + [Cloudflare D1](https://developers.cloudflare.com/d1/) (SQLite) |
 
 ---

@@ -106,6 +106,18 @@ export const mockAccountHandlers = {
   },
 };
 
+// ─── Categories ───────────────────────────────────────────────────────────────
+
+export const mockCategoryHandlers = {
+  async list(type?: string): Promise<PaginatedResponse<Category>> {
+    await delay(60);
+    const filtered = type
+      ? mockCategories.filter((c) => c.type === type)
+      : [...mockCategories];
+    return paginate(filtered, 1, Math.max(filtered.length, 20));
+  },
+};
+
 // ─── Transactions ──────────────────────────────────────────────────────────────
 
 interface TxFilters {

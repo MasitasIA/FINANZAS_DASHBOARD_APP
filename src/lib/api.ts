@@ -1,17 +1,28 @@
 /**
  * Cloudflare D1 API client
  * Todas las peticiones van a tu Cloudflare Worker que expone la base D1.
- *
- * Configuración: en .env (o app.config.ts con process.env):
- *   EXPO_PUBLIC_API_URL=https://tu-worker.tu-usuario.workers.dev
- *   EXPO_PUBLIC_API_TOKEN=<bearer-token>  (solo si usas autenticación)
+ * Envía automáticamente el Firebase ID Token del usuario autenticado.
  */
 
+import { auth } from "./firebase";
+
 const BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? "").trim();
-const TOKEN = (process.env.EXPO_PUBLIC_API_TOKEN ?? "").trim();
+const FALLBACK_TOKEN = (process.env.EXPO_PUBLIC_API_TOKEN ?? "").trim();
 
 interface RequestOptions extends Omit<RequestInit, "body"> {
   body?: unknown;
+}
+
+async function getBearerToken(): Promise<string> {
+  try {
+    const currentUser = auth.currentUser;
+    if (currentUser) {
+      return await currentUser.getIdToken();
+    }
+  } catch {
+    // Fallback al token estático si existiera
+  }
+  return FALLBACK_TOKEN;
 }
 
 async function request<T>(
@@ -19,12 +30,13 @@ async function request<T>(
   options: RequestOptions = {},
 ): Promise<T> {
   const { body, headers = {}, ...rest } = options;
+  const token = await getBearerToken();
 
   const response = await fetch(`${BASE_URL}${path}`, {
     ...rest,
     headers: {
       "Content-Type": "application/json",
-      ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(headers as Record<string, string>),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -34,8 +46,7 @@ async function request<T>(
     const text = await response.text().catch(() => response.statusText);
     if (__DEV__ && response.status === 401) {
       console.warn(
-        `[API 401] Petición no autorizada a ${path}. Token enviado: ${TOKEN ? "PRESENTE" : "VACÍO/NO CONFIGURADO"}. ` +
-          `Si actualizaste .env recientemente, reinicia el servidor de Expo con 'npx expo start --clear'.`,
+        `[API 401] Petición no autorizada a ${path}. Token enviado: ${token ? "PRESENTE" : "VACÍO"}.`,
       );
     }
     throw new Error(`[API ${response.status}] ${text}`);

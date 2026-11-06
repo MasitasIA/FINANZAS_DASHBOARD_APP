@@ -438,14 +438,15 @@ export default function AccountDetailScreen() {
                 className="active:opacity-75"
               >
                 <Card className="flex-row items-center gap-3">
-                  <View className="flex-1">
-                    <Typography>{tx.description}</Typography>
+                  <View className="flex-1 min-w-0">
+                    <Typography numberOfLines={1}>{tx.description}</Typography>
                     <Typography variant="caption">
                       {formatRelativeDate(tx.date)}
                     </Typography>
                   </View>
                   <Typography
-                    className={`font-semibold ${
+                    numberOfLines={1}
+                    className={`font-semibold shrink-0 ${
                       isPositive ? "text-success-500" : "text-danger-500"
                     }`}
                   >
@@ -551,7 +552,7 @@ export default function AccountDetailScreen() {
                 <Typography variant="label" className="mb-2">
                   Color
                 </Typography>
-                <View className="flex-row gap-3 items-center">
+                <View className="flex-row flex-wrap gap-3 items-center">
                   {accountColors.map((c) => (
                     <Pressable
                       key={c}
@@ -580,7 +581,7 @@ export default function AccountDetailScreen() {
                 <Typography variant="label" className="mb-2">
                   Ícono
                 </Typography>
-                <View className="flex-row gap-3 items-center">
+                <View className="flex-row flex-wrap gap-3 items-center">
                   {ACCOUNT_ICONS.map((ico) => (
                     <Pressable
                       key={ico}

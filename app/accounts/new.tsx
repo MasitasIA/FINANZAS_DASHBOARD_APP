@@ -288,7 +288,7 @@ export default function NewAccountScreen() {
               <Typography variant="label" className="mb-2.5">
                 Color identificativo
               </Typography>
-              <View className="flex-row gap-3 items-center">
+              <View className="flex-row flex-wrap gap-3 items-center">
                 {COLORS.map((c) => (
                   <Pressable
                     key={c}
@@ -316,7 +316,7 @@ export default function NewAccountScreen() {
               <Typography variant="label" className="mb-2.5">
                 Ícono
               </Typography>
-              <View className="flex-row gap-3 items-center">
+              <View className="flex-row flex-wrap gap-3 items-center">
                 {ICONS.map((i) => (
                   <Pressable
                     key={i}

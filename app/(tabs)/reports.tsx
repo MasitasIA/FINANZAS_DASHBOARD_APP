@@ -207,21 +207,29 @@ export default function ReportsScreen() {
         ) : (
           <>
             {/* ── Tarjetas Resumen (Totales) ─────────────────────────── */}
-            <View className="flex-row gap-3 mb-3">
-              <Card className="flex-1 items-center gap-1 p-3.5">
-                <Typography variant="label">
+            <View className="flex-row flex-wrap gap-3 mb-3">
+              <Card className="flex-1 min-w-[140px] items-center gap-1 p-3.5">
+                <Typography variant="label" numberOfLines={1}>
                   {isMonthly ? "Ingresos del mes" : "Ingresos anuales"}
                 </Typography>
-                <Typography className="text-success-500 font-bold text-lg">
+                <Typography
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  className="text-success-500 font-bold text-lg"
+                >
                   +{formatCurrency(totalIncome)}
                 </Typography>
               </Card>
 
-              <Card className="flex-1 items-center gap-1 p-3.5">
-                <Typography variant="label">
+              <Card className="flex-1 min-w-[140px] items-center gap-1 p-3.5">
+                <Typography variant="label" numberOfLines={1}>
                   {isMonthly ? "Gastos del mes" : "Gastos anuales"}
                 </Typography>
-                <Typography className="text-danger-500 font-bold text-lg">
+                <Typography
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  className="text-danger-500 font-bold text-lg"
+                >
                   -{formatCurrency(totalExpenses)}
                 </Typography>
               </Card>
@@ -233,6 +241,8 @@ export default function ReportsScreen() {
                 {isMonthly ? "Balance neto mensual" : "Balance neto anual"}
               </Typography>
               <Typography
+                numberOfLines={1}
+                adjustsFontSizeToFit
                 className={`font-bold text-3xl ${
                   netBalance >= 0 ? "text-success-500" : "text-danger-500"
                 }`}

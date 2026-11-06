@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import Svg, { Circle, G, Path } from "react-native-svg";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Typography } from "./Typography";
@@ -247,17 +247,27 @@ export function PieChart({
       >
         <Svg width={size} height={size}>
           <G>
-            {slices.map((slice) => (
-              <Path
-                key={slice.id}
-                d={slice.pathData}
-                fill={slice.color}
-                opacity={selectedId ? (slice.isSelected ? 1 : 0.45) : 0.95}
-                stroke={colors.surface[800]}
-                strokeWidth={1.5}
-                onPress={() => handlePressItem(slice)}
-              />
-            ))}
+            {slices.map((slice) => {
+              const pressProps =
+                Platform.OS === "web"
+                  ? ({
+                      onClick: () => handlePressItem(slice),
+                      style: { cursor: "pointer" },
+                    } as any)
+                  : { onPress: () => handlePressItem(slice) };
+
+              return (
+                <Path
+                  key={slice.id}
+                  d={slice.pathData}
+                  fill={slice.color}
+                  opacity={selectedId ? (slice.isSelected ? 1 : 0.45) : 0.95}
+                  stroke={colors.surface[800]}
+                  strokeWidth={1.5}
+                  {...pressProps}
+                />
+              );
+            })}
           </G>
         </Svg>
 

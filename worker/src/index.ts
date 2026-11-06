@@ -1,14 +1,14 @@
 /**
- * Cloudflare Worker — REST API para Finanzas Dashboard
- * Conexión nativa con SQLite Cloudflare D1
+ * Cloudflare Worker — REST API Multi-Usuario para Finanzas Dashboard
+ * Autenticación vía Firebase ID Token (RS256) + Cloudflare D1
  */
 
-// Type fallback para entornos sin @cloudflare/workers-types global
 type D1DatabaseType = any;
 
 export interface Env {
   DB: D1DatabaseType;
   API_TOKEN?: string;
+  FIREBASE_PROJECT_ID?: string;
 }
 
 // ─── CORS Headers ─────────────────────────────────────────────────────────────
@@ -34,6 +34,130 @@ function error(message: string, status = 400) {
 
 function success<T>(data: T, status = 200) {
   return json({ success: true, data }, status);
+}
+
+// ─── Verificación de Firebase ID Token (Web Crypto RS256 + Google JWKS) ──────
+const GOOGLE_JWKS_URL =
+  "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
+
+let cachedJwks: { keys: any[]; expiresAt: number } | null = null;
+
+function base64UrlToUint8Array(base64Url: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64Url.length % 4)) % 4);
+  const base64 = (base64Url + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+function decodeJwtPart(part: string): any {
+  const bytes = base64UrlToUint8Array(part);
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+async function getGoogleJwks(): Promise<any[]> {
+  const now = Date.now();
+  if (cachedJwks && cachedJwks.expiresAt > now) {
+    return cachedJwks.keys;
+  }
+  const res = await fetch(GOOGLE_JWKS_URL);
+  if (!res.ok) {
+    throw new Error("No se pudieron obtener las claves públicas de Google");
+  }
+  const data: any = await res.json();
+  cachedJwks = {
+    keys: data.keys || [],
+    expiresAt: now + 1000 * 60 * 60, // 1 hora en caché
+  };
+  return cachedJwks.keys;
+}
+
+async function verifyFirebaseIdToken(
+  token: string,
+  projectId: string,
+): Promise<string | null> {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+
+    const [headerB64, payloadB64, signatureB64] = parts;
+    const header = decodeJwtPart(headerB64);
+    const payload = decodeJwtPart(payloadB64);
+
+    if (header.alg !== "RS256" || !header.kid) return null;
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (!payload.exp || payload.exp < nowSec) return null;
+    if (payload.aud !== projectId) return null;
+    if (payload.iss !== `https://securetoken.google.com/${projectId}`) {
+      return null;
+    }
+    if (!payload.sub || typeof payload.sub !== "string") return null;
+
+    const keys = await getGoogleJwks();
+    const jwk = keys.find((k: any) => k.kid === header.kid);
+    if (!jwk) return null;
+
+    const cryptoKey = await crypto.subtle.importKey(
+      "jwk",
+      jwk,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["verify"],
+    );
+
+    const signedData = new TextEncoder().encode(`${headerB64}.${payloadB64}`);
+    const signature = base64UrlToUint8Array(signatureB64);
+
+    const isValid = await crypto.subtle.verify(
+      "RSASSA-PKCS1-v1_5",
+      cryptoKey,
+      signature,
+      signedData,
+    );
+
+    return isValid ? payload.sub : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Si existen registros previos con user_id = 'legacy' (creados antes de activar multi-usuario),
+ * se vinculan automáticamente al primer usuario real de Firebase que inicie sesión.
+ */
+let legacyAlreadyClaimed = false;
+
+async function claimLegacyDataIfAny(
+  db: D1DatabaseType,
+  userId: string,
+): Promise<void> {
+  if (legacyAlreadyClaimed || userId === "legacy") return;
+
+  const legacyCheck = await db
+    .prepare("SELECT id FROM accounts WHERE user_id = 'legacy' LIMIT 1")
+    .first();
+
+  if (legacyCheck) {
+    await db.batch([
+      db
+        .prepare("UPDATE accounts SET user_id = ? WHERE user_id = 'legacy'")
+        .bind(userId),
+      db
+        .prepare("UPDATE transactions SET user_id = ? WHERE user_id = 'legacy'")
+        .bind(userId),
+      db
+        .prepare(
+          "UPDATE savings_goals SET user_id = ? WHERE user_id = 'legacy'",
+        )
+        .bind(userId),
+    ]);
+  }
+
+  legacyAlreadyClaimed = true;
 }
 
 // ─── Helpers de formateo Snake <-> Camel ──────────────────────────────────────
@@ -91,6 +215,18 @@ function toCamelCaseGoal(row: any) {
   };
 }
 
+function toCamelCaseCategory(row: any) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    icon: row.icon,
+    color: row.color,
+    type: row.type,
+    isDefault: Boolean(row.is_default),
+  };
+}
+
 // ─── Entrypoint del Worker ───────────────────────────────────────────────────
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -102,21 +238,43 @@ export default {
     const path = url.pathname;
     const method = request.method;
 
-    // Validación de Token si está configurado
-    if (env.API_TOKEN && env.API_TOKEN.trim().length > 0) {
-      const authHeader = request.headers.get("Authorization");
-      const expected = `Bearer ${env.API_TOKEN.trim()}`;
-      if (!authHeader || authHeader.trim() !== expected) {
-        return error("No autorizado", 401);
+    // ─── Autenticación: Firebase JWT (o fallback a API_TOKEN para pruebas) ──
+    const authHeader = request.headers.get("Authorization") || "";
+    const bearerToken = authHeader.startsWith("Bearer ")
+      ? authHeader.slice(7).trim()
+      : "";
+
+    if (!bearerToken) {
+      return error("No autorizado: falta token de sesión", 401);
+    }
+
+    const projectId = (env.FIREBASE_PROJECT_ID || "unpo-finanzas").trim();
+    let userId = await verifyFirebaseIdToken(bearerToken, projectId);
+
+    if (!userId) {
+      // Fallback en caso de que se use el API_TOKEN legado
+      if (
+        env.API_TOKEN &&
+        env.API_TOKEN.trim().length > 0 &&
+        bearerToken === env.API_TOKEN.trim()
+      ) {
+        userId = "legacy";
+      } else {
+        return error("Sesión inválida o expirada", 401);
       }
+    } else {
+      // Si es un usuario autenticado con Firebase, migrar datos 'legacy' la primera vez
+      await claimLegacyDataIfAny(env.DB, userId);
     }
 
     try {
       // ─── ACCOUNTS ──────────────────────────────────────────────────────────
       if (path === "/accounts" && method === "GET") {
         const rows = await env.DB.prepare(
-          "SELECT * FROM accounts ORDER BY created_at ASC",
-        ).all();
+          "SELECT * FROM accounts WHERE user_id = ? ORDER BY created_at ASC",
+        )
+          .bind(userId)
+          .all();
         const data = (rows.results || []).map(toCamelCaseAccount);
         return json({
           data,
@@ -132,11 +290,12 @@ export default {
         const id =
           body.id || crypto.randomUUID().replace(/-/g, "").slice(0, 16);
         await env.DB.prepare(
-          `INSERT INTO accounts (id, name, type, currency, balance, color, icon, credit_limit, closing_day, due_day)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO accounts (id, user_id, name, type, currency, balance, color, icon, credit_limit, closing_day, due_day)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             id,
+            userId,
             body.name,
             body.type,
             body.currency || "ARS",
@@ -150,17 +309,19 @@ export default {
           .run();
 
         const created = await env.DB.prepare(
-          "SELECT * FROM accounts WHERE id = ?",
+          "SELECT * FROM accounts WHERE id = ? AND user_id = ?",
         )
-          .bind(id)
+          .bind(id, userId)
           .first();
         return success(toCamelCaseAccount(created), 201);
       }
 
       if (path.startsWith("/accounts/") && method === "GET") {
         const id = path.split("/")[2];
-        const row = await env.DB.prepare("SELECT * FROM accounts WHERE id = ?")
-          .bind(id)
+        const row = await env.DB.prepare(
+          "SELECT * FROM accounts WHERE id = ? AND user_id = ?",
+        )
+          .bind(id, userId)
           .first();
         if (!row) return error("Cuenta no encontrada", 404);
         return success(toCamelCaseAccount(row));
@@ -207,28 +368,48 @@ export default {
 
         if (fields.length > 0) {
           fields.push("updated_at = datetime('now')");
-          values.push(id);
+          values.push(id, userId);
           await env.DB.prepare(
-            `UPDATE accounts SET ${fields.join(", ")} WHERE id = ?`,
+            `UPDATE accounts SET ${fields.join(", ")} WHERE id = ? AND user_id = ?`,
           )
             .bind(...values)
             .run();
         }
 
         const updated = await env.DB.prepare(
-          "SELECT * FROM accounts WHERE id = ?",
+          "SELECT * FROM accounts WHERE id = ? AND user_id = ?",
         )
-          .bind(id)
+          .bind(id, userId)
           .first();
         return success(toCamelCaseAccount(updated));
       }
 
       if (path.startsWith("/accounts/") && method === "DELETE") {
         const id = path.split("/")[2];
-        await env.DB.prepare("DELETE FROM accounts WHERE id = ?")
-          .bind(id)
+        await env.DB.prepare(
+          "DELETE FROM accounts WHERE id = ? AND user_id = ?",
+        )
+          .bind(id, userId)
           .run();
         return success(null);
+      }
+
+      // ─── CATEGORIES (Compartidas para todos los usuarios) ──────────────────
+      if (path === "/categories" && method === "GET") {
+        const type = url.searchParams.get("type");
+        const query = type
+          ? "SELECT * FROM categories WHERE type = ? ORDER BY is_default DESC, rowid ASC"
+          : "SELECT * FROM categories ORDER BY is_default DESC, rowid ASC";
+        const stmt = env.DB.prepare(query);
+        const rows = type ? await stmt.bind(type).all() : await stmt.all();
+        const data = (rows.results || []).map(toCamelCaseCategory);
+        return json({
+          data,
+          total: data.length,
+          page: 1,
+          pageSize: data.length,
+          hasNextPage: false,
+        });
       }
 
       // ─── TRANSACTIONS ──────────────────────────────────────────────────────
@@ -249,8 +430,8 @@ export default {
         );
         const offset = (page - 1) * pageSize;
 
-        const conditions: string[] = [];
-        const bindings: any[] = [];
+        const conditions: string[] = ["user_id = ?"];
+        const bindings: any[] = [userId];
 
         if (accountId) {
           conditions.push("(account_id = ? OR to_account_id = ?)");
@@ -277,8 +458,7 @@ export default {
           bindings.push(endDate);
         }
 
-        const whereClause =
-          conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+        const whereClause = `WHERE ${conditions.join(" AND ")}`;
 
         const countQuery = `SELECT COUNT(*) as count FROM transactions ${whereClause}`;
         const totalResult = await env.DB.prepare(countQuery)
@@ -306,11 +486,12 @@ export default {
         const id =
           body.id || crypto.randomUUID().replace(/-/g, "").slice(0, 16);
         await env.DB.prepare(
-          `INSERT INTO transactions (id, account_id, category_id, type, amount, currency, description, note, date, to_account_id, goal_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO transactions (id, user_id, account_id, category_id, type, amount, currency, description, note, date, to_account_id, goal_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             id,
+            userId,
             body.accountId,
             body.categoryId,
             body.type,
@@ -325,9 +506,9 @@ export default {
           .run();
 
         const created = await env.DB.prepare(
-          "SELECT * FROM transactions WHERE id = ?",
+          "SELECT * FROM transactions WHERE id = ? AND user_id = ?",
         )
-          .bind(id)
+          .bind(id, userId)
           .first();
         return success(toCamelCaseTransaction(created), 201);
       }
@@ -335,9 +516,9 @@ export default {
       if (path.startsWith("/transactions/") && method === "GET") {
         const id = path.split("/")[2];
         const row = await env.DB.prepare(
-          "SELECT * FROM transactions WHERE id = ?",
+          "SELECT * FROM transactions WHERE id = ? AND user_id = ?",
         )
-          .bind(id)
+          .bind(id, userId)
           .first();
         if (!row) return error("Transacción no encontrada", 404);
         return success(toCamelCaseTransaction(row));
@@ -372,26 +553,28 @@ export default {
 
         if (fields.length > 0) {
           fields.push("updated_at = datetime('now')");
-          values.push(id);
+          values.push(id, userId);
           await env.DB.prepare(
-            `UPDATE transactions SET ${fields.join(", ")} WHERE id = ?`,
+            `UPDATE transactions SET ${fields.join(", ")} WHERE id = ? AND user_id = ?`,
           )
             .bind(...values)
             .run();
         }
 
         const updated = await env.DB.prepare(
-          "SELECT * FROM transactions WHERE id = ?",
+          "SELECT * FROM transactions WHERE id = ? AND user_id = ?",
         )
-          .bind(id)
+          .bind(id, userId)
           .first();
         return success(toCamelCaseTransaction(updated));
       }
 
       if (path.startsWith("/transactions/") && method === "DELETE") {
         const id = path.split("/")[2];
-        await env.DB.prepare("DELETE FROM transactions WHERE id = ?")
-          .bind(id)
+        await env.DB.prepare(
+          "DELETE FROM transactions WHERE id = ? AND user_id = ?",
+        )
+          .bind(id, userId)
           .run();
         return success(null);
       }
@@ -399,8 +582,10 @@ export default {
       // ─── GOALS ─────────────────────────────────────────────────────────────
       if (path === "/goals" && method === "GET") {
         const rows = await env.DB.prepare(
-          "SELECT * FROM savings_goals ORDER BY created_at ASC",
-        ).all();
+          "SELECT * FROM savings_goals WHERE user_id = ? ORDER BY created_at ASC",
+        )
+          .bind(userId)
+          .all();
         const data = (rows.results || []).map(toCamelCaseGoal);
         return json({
           data,
@@ -416,11 +601,12 @@ export default {
         const id =
           body.id || crypto.randomUUID().replace(/-/g, "").slice(0, 16);
         await env.DB.prepare(
-          `INSERT INTO savings_goals (id, name, target_amount, current_amount, currency, deadline, icon, color, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO savings_goals (id, user_id, name, target_amount, current_amount, currency, deadline, icon, color, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             id,
+            userId,
             body.name,
             body.targetAmount,
             body.currentAmount || 0,
@@ -433,9 +619,9 @@ export default {
           .run();
 
         const created = await env.DB.prepare(
-          "SELECT * FROM savings_goals WHERE id = ?",
+          "SELECT * FROM savings_goals WHERE id = ? AND user_id = ?",
         )
-          .bind(id)
+          .bind(id, userId)
           .first();
         return success(toCamelCaseGoal(created), 201);
       }
@@ -443,9 +629,9 @@ export default {
       if (path.startsWith("/goals/") && method === "GET") {
         const id = path.split("/")[2];
         const row = await env.DB.prepare(
-          "SELECT * FROM savings_goals WHERE id = ?",
+          "SELECT * FROM savings_goals WHERE id = ? AND user_id = ?",
         )
-          .bind(id)
+          .bind(id, userId)
           .first();
         if (!row) return error("Meta no encontrada", 404);
         return success(toCamelCaseGoal(row));
@@ -492,26 +678,28 @@ export default {
 
         if (fields.length > 0) {
           fields.push("updated_at = datetime('now')");
-          values.push(id);
+          values.push(id, userId);
           await env.DB.prepare(
-            `UPDATE savings_goals SET ${fields.join(", ")} WHERE id = ?`,
+            `UPDATE savings_goals SET ${fields.join(", ")} WHERE id = ? AND user_id = ?`,
           )
             .bind(...values)
             .run();
         }
 
         const updated = await env.DB.prepare(
-          "SELECT * FROM savings_goals WHERE id = ?",
+          "SELECT * FROM savings_goals WHERE id = ? AND user_id = ?",
         )
-          .bind(id)
+          .bind(id, userId)
           .first();
         return success(toCamelCaseGoal(updated));
       }
 
       if (path.startsWith("/goals/") && method === "DELETE") {
         const id = path.split("/")[2];
-        await env.DB.prepare("DELETE FROM savings_goals WHERE id = ?")
-          .bind(id)
+        await env.DB.prepare(
+          "DELETE FROM savings_goals WHERE id = ? AND user_id = ?",
+        )
+          .bind(id, userId)
           .run();
         return success(null);
       }
@@ -525,9 +713,9 @@ export default {
         const goalId = path.split("/")[2];
         const body: any = await request.json();
         const goal = await env.DB.prepare(
-          "SELECT * FROM savings_goals WHERE id = ?",
+          "SELECT * FROM savings_goals WHERE id = ? AND user_id = ?",
         )
-          .bind(goalId)
+          .bind(goalId, userId)
           .first();
         if (!goal) return error("Meta no encontrada", 404);
 
@@ -535,11 +723,12 @@ export default {
         const date = body.date || new Date().toISOString().slice(0, 10);
 
         await env.DB.prepare(
-          `INSERT INTO transactions (id, account_id, category_id, type, amount, currency, description, note, date, goal_id)
-           VALUES (?, ?, 'cat-savings', 'expense', ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO transactions (id, user_id, account_id, category_id, type, amount, currency, description, note, date, goal_id)
+           VALUES (?, ?, ?, 'cat-savings', 'expense', ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             txId,
+            userId,
             body.accountId,
             body.amount,
             goal.currency,
@@ -551,14 +740,14 @@ export default {
           .run();
 
         const updatedGoal = await env.DB.prepare(
-          "SELECT * FROM savings_goals WHERE id = ?",
+          "SELECT * FROM savings_goals WHERE id = ? AND user_id = ?",
         )
-          .bind(goalId)
+          .bind(goalId, userId)
           .first();
         const createdTx = await env.DB.prepare(
-          "SELECT * FROM transactions WHERE id = ?",
+          "SELECT * FROM transactions WHERE id = ? AND user_id = ?",
         )
-          .bind(txId)
+          .bind(txId, userId)
           .first();
 
         return success({
@@ -576,9 +765,9 @@ export default {
         const goalId = path.split("/")[2];
         const body: any = await request.json();
         const goal = await env.DB.prepare(
-          "SELECT * FROM savings_goals WHERE id = ?",
+          "SELECT * FROM savings_goals WHERE id = ? AND user_id = ?",
         )
-          .bind(goalId)
+          .bind(goalId, userId)
           .first();
         if (!goal) return error("Meta no encontrada", 404);
 
@@ -586,11 +775,12 @@ export default {
         const date = body.date || new Date().toISOString().slice(0, 10);
 
         await env.DB.prepare(
-          `INSERT INTO transactions (id, account_id, category_id, type, amount, currency, description, note, date, goal_id)
-           VALUES (?, ?, 'cat-savings', 'income', ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO transactions (id, user_id, account_id, category_id, type, amount, currency, description, note, date, goal_id)
+           VALUES (?, ?, ?, 'cat-savings', 'income', ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             txId,
+            userId,
             body.accountId,
             body.amount,
             goal.currency,
@@ -602,14 +792,14 @@ export default {
           .run();
 
         const updatedGoal = await env.DB.prepare(
-          "SELECT * FROM savings_goals WHERE id = ?",
+          "SELECT * FROM savings_goals WHERE id = ? AND user_id = ?",
         )
-          .bind(goalId)
+          .bind(goalId, userId)
           .first();
         const createdTx = await env.DB.prepare(
-          "SELECT * FROM transactions WHERE id = ?",
+          "SELECT * FROM transactions WHERE id = ? AND user_id = ?",
         )
-          .bind(txId)
+          .bind(txId, userId)
           .first();
 
         return success({
@@ -630,14 +820,13 @@ export default {
         );
         const monthPattern = `${year}-${String(month).padStart(2, "0")}%`;
 
-        // Transacciones del mes (excluyendo metas y aportes a ahorros)
         const txRows = await env.DB.prepare(
           `SELECT t.*, c.name as cat_name, c.color as cat_color, c.icon as cat_icon
            FROM transactions t
            LEFT JOIN categories c ON t.category_id = c.id
-           WHERE t.date LIKE ? AND t.goal_id IS NULL AND (t.category_id != 'cat-savings' OR t.category_id IS NULL)`,
+           WHERE t.user_id = ? AND t.date LIKE ? AND t.goal_id IS NULL AND (t.category_id != 'cat-savings' OR t.category_id IS NULL)`,
         )
-          .bind(monthPattern)
+          .bind(userId, monthPattern)
           .all();
 
         const txs = (txRows.results || []) as any[];
@@ -711,14 +900,13 @@ export default {
         );
         const yearPattern = `${year}%`;
 
-        // Transacciones del año (excluyendo metas y aportes a ahorros)
         const txRows = await env.DB.prepare(
           `SELECT t.*, c.name as cat_name, c.color as cat_color, c.icon as cat_icon
            FROM transactions t
            LEFT JOIN categories c ON t.category_id = c.id
-           WHERE t.date LIKE ? AND t.goal_id IS NULL AND (t.category_id != 'cat-savings' OR t.category_id IS NULL)`,
+           WHERE t.user_id = ? AND t.date LIKE ? AND t.goal_id IS NULL AND (t.category_id != 'cat-savings' OR t.category_id IS NULL)`,
         )
-          .bind(yearPattern)
+          .bind(userId, yearPattern)
           .all();
 
         const txs = (txRows.results || []) as any[];
@@ -775,7 +963,6 @@ export default {
 
         const netBalance = totalIncome - totalExpenses;
 
-        // Desglose de 12 meses
         const MONTH_NAMES = [
           "Ene",
           "Feb",

@@ -21,13 +21,16 @@ import {
   useWithdrawFromGoal,
 } from "@/hooks/useGoals";
 import { useAccounts } from "@/hooks/useAccounts";
-import { useTransactions } from "@/hooks/useTransactions";
+import {
+  useTransactions,
+  useDeleteTransaction,
+} from "@/hooks/useTransactions";
 import {
   formatCurrency,
   formatDate,
   formatRelativeDate,
 } from "@/utils/formatters";
-import type { GoalStatus, SavingsGoal } from "@/types";
+import type { GoalStatus, SavingsGoal, Transaction } from "@/types";
 import { colors, accountColors } from "../../tailwind.config";
 
 const GOAL_ICONS: (keyof typeof MaterialCommunityIcons.glyphMap)[] = [
@@ -89,6 +92,7 @@ export default function GoalDetailScreen() {
   const { mutate: withdraw, isPending: isWithdrawing } = useWithdrawFromGoal();
   const { mutate: updateGoal, isPending: isUpdating } = useUpdateGoal();
   const { mutate: deleteGoal, isPending: isDeleting } = useDeleteGoal();
+  const { mutate: deleteTx, isPending: isDeletingTx } = useDeleteTransaction();
 
   // Modales
   const [activeModal, setActiveModal] = useState<
@@ -267,6 +271,29 @@ export default function GoalDetailScreen() {
     }
   };
 
+  // Eliminar movimiento individual de la meta (revierte saldo en meta y cuenta)
+  const handleDeleteGoalTx = (tx: Transaction) => {
+    const isDeposit =
+      tx.type === "expense" || tx.description.toLowerCase().includes("aporte");
+    const label = isDeposit ? "aporte" : "retiro";
+    const msg = `¿Eliminar este ${label} de ${formatCurrency(tx.amount, tx.currency)}? Se revertirá automáticamente el saldo en la meta y en la cuenta asociada.`;
+
+    if (Platform.OS === "web") {
+      if (window.confirm(msg)) {
+        deleteTx(tx.id);
+      }
+    } else {
+      Alert.alert(`Eliminar ${label}`, msg, [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Eliminar",
+          style: "destructive",
+          onPress: () => deleteTx(tx.id),
+        },
+      ]);
+    }
+  };
+
   return (
     <SafeAreaView edges={["bottom"]} className="flex-1 bg-surface-900">
       <ScrollView
@@ -388,22 +415,40 @@ export default function GoalDetailScreen() {
             />
           </View>
 
-          <View className="flex-row justify-between pt-1">
-            <View>
-              <Typography variant="label">Ahorrado</Typography>
-              <Typography className="text-lg font-bold text-success-500 mt-0.5">
+          <View className="flex-row flex-wrap gap-2.5 pt-1">
+            <View className="flex-1 min-w-[110px] bg-surface-700/50 p-2.5 rounded-2xl">
+              <Typography variant="label" numberOfLines={1}>
+                Ahorrado
+              </Typography>
+              <Typography
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                className="text-base font-bold text-success-500 mt-0.5"
+              >
                 {formatCurrency(goal.currentAmount, goal.currency)}
               </Typography>
             </View>
-            <View className="items-center">
-              <Typography variant="label">Restante</Typography>
-              <Typography className="text-lg font-bold text-warning-500 mt-0.5">
+            <View className="flex-1 min-w-[110px] bg-surface-700/50 p-2.5 rounded-2xl">
+              <Typography variant="label" numberOfLines={1}>
+                Restante
+              </Typography>
+              <Typography
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                className="text-base font-bold text-warning-500 mt-0.5"
+              >
                 {formatCurrency(remaining, goal.currency)}
               </Typography>
             </View>
-            <View className="items-end">
-              <Typography variant="label">Objetivo</Typography>
-              <Typography className="text-lg font-bold text-text-primary mt-0.5">
+            <View className="flex-1 min-w-[110px] bg-surface-700/50 p-2.5 rounded-2xl">
+              <Typography variant="label" numberOfLines={1}>
+                Objetivo
+              </Typography>
+              <Typography
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                className="text-base font-bold text-text-primary mt-0.5"
+              >
                 {formatCurrency(goal.targetAmount, goal.currency)}
               </Typography>
             </View>
@@ -453,21 +498,29 @@ export default function GoalDetailScreen() {
                   {plan.months === 1 ? "mes" : "meses"}):
                 </Typography>
 
-                <View className="flex-row gap-3 pt-1">
-                  <View className="flex-1 bg-surface-700/60 p-3 rounded-2xl">
+                <View className="flex-row flex-wrap gap-3 pt-1">
+                  <View className="flex-1 min-w-[120px] bg-surface-700/60 p-3 rounded-2xl">
                     <Typography variant="caption" muted>
                       Por mes
                     </Typography>
-                    <Typography className="text-base font-bold text-primary-600 mt-0.5">
+                    <Typography
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      className="text-base font-bold text-primary-600 mt-0.5"
+                    >
                       {formatCurrency(plan.perMonth, goal.currency)}
                     </Typography>
                   </View>
 
-                  <View className="flex-1 bg-surface-700/60 p-3 rounded-2xl">
+                  <View className="flex-1 min-w-[120px] bg-surface-700/60 p-3 rounded-2xl">
                     <Typography variant="caption" muted>
                       Por semana
                     </Typography>
-                    <Typography className="text-base font-bold text-primary-600 mt-0.5">
+                    <Typography
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      className="text-base font-bold text-primary-600 mt-0.5"
+                    >
                       {formatCurrency(plan.perWeek, goal.currency)}
                     </Typography>
                   </View>
@@ -552,6 +605,19 @@ export default function GoalDetailScreen() {
                     {isDeposit ? "+" : "-"}
                     {formatCurrency(tx.amount, tx.currency)}
                   </Typography>
+
+                  <Pressable
+                    onPress={() => handleDeleteGoalTx(tx)}
+                    disabled={isDeletingTx}
+                    accessibilityLabel="Eliminar movimiento"
+                    className="w-8 h-8 rounded-xl bg-surface-700/80 items-center justify-center active:bg-danger-50"
+                  >
+                    <MaterialCommunityIcons
+                      name="trash-can-outline"
+                      size={17}
+                      color={colors.danger[500]}
+                    />
+                  </Pressable>
                 </Card>
               );
             })
@@ -874,7 +940,7 @@ export default function GoalDetailScreen() {
                 <Typography variant="label" className="mb-2">
                   Color
                 </Typography>
-                <View className="flex-row gap-2.5 items-center">
+                <View className="flex-row flex-wrap gap-2.5 items-center">
                   {accountColors.map((c) => (
                     <Pressable
                       key={c}

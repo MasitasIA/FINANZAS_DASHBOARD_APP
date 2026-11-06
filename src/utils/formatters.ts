@@ -7,9 +7,11 @@ export function formatCurrency(
   amount: number,
   currency: Currency = "ARS"
 ): string {
+  const hasDecimals = Math.abs(amount % 1) > 0.001;
   return new Intl.NumberFormat("es-AR", {
-    style:    "currency",
+    style:                 "currency",
     currency,
+    minimumFractionDigits: hasDecimals ? 2 : 0,
     maximumFractionDigits: 2,
   }).format(amount);
 }
@@ -50,12 +52,3 @@ export function formatRelativeDate(isoString: string): string {
   return formatDate(isoString);
 }
 
-/**
- * Abrevia números grandes: 1.500.000 → "1,5M"
- */
-export function formatCompact(amount: number): string {
-  return new Intl.NumberFormat("es-AR", {
-    notation:             "compact",
-    maximumFractionDigits: 1,
-  }).format(amount);
-}

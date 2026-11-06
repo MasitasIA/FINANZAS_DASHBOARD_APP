@@ -12,3 +12,7 @@ binding = "DB"
 database_name = "finanzas-db"
 database_id = "72bb17da-523d-4944-84c7-3f58aea70ae2"
 
+[vars]
+FIREBASE_PROJECT_ID = "unpo-finanzas"
+
+

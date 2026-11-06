@@ -10,13 +10,23 @@ import {
   useFonts,
 } from "@expo-google-fonts/inter";
 import { NavigationBar } from "expo-navigation-bar";
-import { Stack } from "expo-router";
+import { Stack, router, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
-import { useEffect } from "react";
-import { AppState, type AppStateStatus, Platform } from "react-native";
+import { onAuthStateChanged, type User } from "firebase/auth";
+import { useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  AppState,
+  type AppStateStatus,
+  Platform,
+  View,
+} from "react-native";
+import { auth, isFirebaseConfigured } from "@/lib/firebase";
 
 SplashScreen.preventAutoHideAsync();
+
+const USE_MOCK = process.env.EXPO_PUBLIC_USE_MOCK === "true";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,9 +45,43 @@ export default function RootLayout() {
     Inter_700Bold,
   });
 
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(
+    USE_MOCK || !isFirebaseConfigured,
+  );
+  const lastUidRef = useRef<string | null>(null);
+  const segments = useSegments();
+
   useEffect(() => {
     if (loaded) SplashScreen.hideAsync();
   }, [loaded]);
+
+  useEffect(() => {
+    if (USE_MOCK || !isFirebaseConfigured) return;
+
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      const nextUid = firebaseUser?.uid ?? null;
+      if (lastUidRef.current !== nextUid) {
+        queryClient.clear();
+        lastUidRef.current = nextUid;
+      }
+      setUser(firebaseUser);
+      setAuthReady(true);
+    });
+
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (!loaded || !authReady || USE_MOCK || !isFirebaseConfigured) return;
+
+    const inLoginScreen = segments[0] === "login";
+    if (!user && !inLoginScreen) {
+      router.replace("/login");
+    } else if (user && inLoginScreen) {
+      router.replace("/(tabs)");
+    }
+  }, [user, authReady, loaded, segments]);
 
   useEffect(() => {
     if (Platform.OS !== "android") return;
@@ -59,13 +103,20 @@ export default function RootLayout() {
     };
   }, []);
 
-  if (!loaded) return null;
+  if (!loaded || !authReady) {
+    return (
+      <View className="flex-1 bg-surface-900 items-center justify-center">
+        <ActivityIndicator size="large" color={colors.primary[500]} />
+      </View>
+    );
+  }
 
   return (
     <QueryClientProvider client={queryClient}>
       <StatusBar style="dark" />
       <NavigationBar hidden style="light" />
       <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen
           name="accounts/[id]"
