@@ -13,6 +13,7 @@ import { NavigationBar } from "expo-navigation-bar";
 import { Stack, router, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
+import * as Updates from "expo-updates";
 import { onAuthStateChanged, type User } from "firebase/auth";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -20,8 +21,11 @@ import {
   AppState,
   type AppStateStatus,
   Platform,
+  Pressable,
   View,
 } from "react-native";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Typography } from "@/components/ui";
 import { auth, isFirebaseConfigured } from "@/lib/firebase";
 
 SplashScreen.preventAutoHideAsync();
@@ -49,12 +53,40 @@ export default function RootLayout() {
   const [authReady, setAuthReady] = useState(
     USE_MOCK || !isFirebaseConfigured,
   );
+  const [updateReady, setUpdateReady] = useState(false);
   const lastUidRef = useRef<string | null>(null);
   const segments = useSegments();
 
   useEffect(() => {
     if (loaded) SplashScreen.hideAsync();
   }, [loaded]);
+
+  // Verificación silenciosa de actualizaciones OTA al iniciar y al volver a primer plano
+  useEffect(() => {
+    if (!Updates.isEnabled) return;
+
+    async function checkAndDownloadUpdate() {
+      try {
+        const res = await Updates.checkForUpdateAsync();
+        if (res.isAvailable) {
+          await Updates.fetchUpdateAsync();
+          setUpdateReady(true);
+        }
+      } catch {
+        // Ignorar errores de red silenciosamente
+      }
+    }
+
+    checkAndDownloadUpdate();
+
+    const sub = AppState.addEventListener("change", (state: AppStateStatus) => {
+      if (state === "active") {
+        checkAndDownloadUpdate();
+      }
+    });
+
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     if (USE_MOCK || !isFirebaseConfigured) return;
@@ -115,6 +147,34 @@ export default function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <StatusBar style="dark" />
       <NavigationBar hidden style="light" />
+      {updateReady && (
+        <View className="bg-primary-600 px-4 pt-10 pb-2.5 flex-row items-center justify-between">
+          <View className="flex-row items-center gap-2 flex-1 mr-2">
+            <MaterialCommunityIcons
+              name="cloud-check-outline"
+              size={18}
+              color={colors.white}
+            />
+            <Typography
+              variant="caption"
+              className="text-white font-semibold flex-1"
+            >
+              Nueva versión descargada y lista
+            </Typography>
+          </View>
+          <Pressable
+            onPress={() => Updates.reloadAsync()}
+            className="bg-white px-3 py-1 rounded-full active:opacity-80"
+          >
+            <Typography
+              variant="caption"
+              className="text-primary-600 font-bold"
+            >
+              Actualizar ahora
+            </Typography>
+          </Pressable>
+        </View>
+      )}
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" />

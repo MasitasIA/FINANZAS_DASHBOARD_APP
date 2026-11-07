@@ -1,39 +1,228 @@
 /**
  * Cloudflare Worker — REST API Multi-Usuario para Finanzas Dashboard
  * Autenticación vía Firebase ID Token (RS256) + Cloudflare D1
+ * Con protección XSS, Rate Limiting y Row-Level Security (RLS)
  */
 
 type D1DatabaseType = any;
 
 export interface Env {
   DB: D1DatabaseType;
-  API_TOKEN?: string;
   FIREBASE_PROJECT_ID?: string;
 }
 
-// ─── CORS Headers ─────────────────────────────────────────────────────────────
-const CORS_HEADERS = {
+// ─── Cabeceras de Seguridad HTTP y CORS ──────────────────────────────────────
+const SECURITY_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+  "Referrer-Policy": "no-referrer",
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
 };
 
-function json(data: unknown, status = 200) {
+function json(
+  data: unknown,
+  status = 200,
+  extraHeaders: Record<string, string> = {},
+) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
-      "Content-Type": "application/json",
-      ...CORS_HEADERS,
+      "Content-Type": "application/json; charset=utf-8",
+      ...SECURITY_HEADERS,
+      ...extraHeaders,
     },
   });
 }
 
-function error(message: string, status = 400) {
-  return json({ success: false, error: message }, status);
+function error(
+  message: string,
+  status = 400,
+  extraHeaders: Record<string, string> = {},
+) {
+  return json({ success: false, error: message }, status, extraHeaders);
 }
 
 function success<T>(data: T, status = 200) {
   return json({ success: true, data }, status);
+}
+
+// ─── Rate Limiting (Ventana Fija en Memoria por Isolate) ─────────────────────
+interface RateBucket {
+  count: number;
+  resetAt: number;
+}
+
+const rateLimitStore = new Map<string, RateBucket>();
+const RATE_WINDOW_MS = 60_000; // 1 minuto
+const IP_LIMIT_PER_MIN = 90; // Máx 90 peticiones/min por IP (pre-autenticación)
+const USER_READ_LIMIT_PER_MIN = 120; // Máx 120 lecturas/min por usuario
+const USER_WRITE_LIMIT_PER_MIN = 30; // Máx 30 escrituras/min por usuario
+
+function checkRateLimit(
+  key: string,
+  maxRequests: number,
+): { allowed: boolean; remaining: number; retryAfterSec: number } {
+  const now = Date.now();
+
+  // Limpieza preventiva para evitar crecimiento de memoria
+  if (rateLimitStore.size > 2000) {
+    for (const [k, v] of rateLimitStore.entries()) {
+      if (v.resetAt <= now) rateLimitStore.delete(k);
+    }
+  }
+
+  const current = rateLimitStore.get(key);
+  if (!current || current.resetAt <= now) {
+    rateLimitStore.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    return {
+      allowed: true,
+      remaining: maxRequests - 1,
+      retryAfterSec: 0,
+    };
+  }
+
+  current.count += 1;
+  if (current.count > maxRequests) {
+    const retryAfterSec = Math.max(
+      1,
+      Math.ceil((current.resetAt - now) / 1000),
+    );
+    return { allowed: false, remaining: 0, retryAfterSec };
+  }
+
+  return {
+    allowed: true,
+    remaining: maxRequests - current.count,
+    retryAfterSec: 0,
+  };
+}
+
+// ─── Sanitización Anti-XSS y Validación de Entradas ──────────────────────────
+/**
+ * Elimina etiquetas HTML/SVG/Script, protocolos peligrosos (javascript:, data:, vbscript:)
+ * y caracteres de control ASCII, limitando la longitud máxima.
+ */
+function sanitizeText(input: unknown, maxLength = 120): string {
+  if (typeof input !== "string") return "";
+  return input
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+    .replace(/<\/?[a-z][^>]*>/gi, "")
+    .replace(/(?:javascript|data|vbscript)\s*:/gi, "")
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function sanitizeIdentifier(input: unknown, maxLength = 64): string {
+  if (typeof input !== "string") return "";
+  return input.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, maxLength);
+}
+
+function sanitizeColor(input: unknown, fallback = "#e23d28"): string {
+  if (typeof input !== "string") return fallback;
+  const trimmed = input.trim();
+  return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(trimmed)
+    ? trimmed.toLowerCase()
+    : fallback;
+}
+
+function sanitizeIcon(input: unknown, fallback = "wallet"): string {
+  if (typeof input !== "string") return fallback;
+  const trimmed = input.trim().toLowerCase();
+  return /^[a-z0-9-]{1,40}$/.test(trimmed) ? trimmed : fallback;
+}
+
+function sanitizeCurrency(input: unknown): "ARS" | "USD" | "EUR" {
+  if (input === "USD" || input === "EUR" || input === "ARS") return input;
+  return "ARS";
+}
+
+function sanitizeDate(input: unknown): string {
+  if (typeof input === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input.trim())) {
+    return input.trim();
+  }
+  return new Date().toISOString().slice(0, 10);
+}
+
+function sanitizeAmount(
+  input: unknown,
+  allowZero = false,
+  allowNegative = false,
+): number | null {
+  const num = typeof input === "number" ? input : Number(input);
+  if (!Number.isFinite(num)) return null;
+  if (Math.abs(num) > 1_000_000_000_000) return null; // Límite anti-desbordamiento (1 billón)
+  if (!allowNegative && num < 0) return null;
+  if (!allowZero && num === 0) return null;
+  return Math.round(num * 100) / 100;
+}
+
+async function parseSafeJsonBody(
+  request: Request,
+  maxBytes = 16_384,
+): Promise<{ ok: true; data: any } | { ok: false; response: Response }> {
+  const contentLength = Number(request.headers.get("Content-Length") || "0");
+  if (contentLength > maxBytes) {
+    return {
+      ok: false,
+      response: error("El cuerpo de la petición excede el tamaño máximo permitido (16 KB)", 413),
+    };
+  }
+  try {
+    const raw = await request.text();
+    if (raw.length > maxBytes) {
+      return {
+        ok: false,
+        response: error("El cuerpo de la petición excede el tamaño máximo permitido (16 KB)", 413),
+      };
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {
+        ok: false,
+        response: error("Formato JSON inválido: se esperaba un objeto", 400),
+      };
+    }
+    return { ok: true, data: parsed };
+  } catch {
+    return {
+      ok: false,
+      response: error("JSON malformado en el cuerpo de la petición", 400),
+    };
+  }
+}
+
+// ─── Row-Level Security (RLS) — Verificación de Propiedad Cruzada ────────────
+async function verifyAccountOwnership(
+  db: D1DatabaseType,
+  accountId: string,
+  userId: string,
+): Promise<boolean> {
+  if (!accountId) return false;
+  const row = await db
+    .prepare("SELECT id FROM accounts WHERE id = ? AND user_id = ? LIMIT 1")
+    .bind(accountId, userId)
+    .first();
+  return Boolean(row);
+}
+
+async function verifyGoalOwnership(
+  db: D1DatabaseType,
+  goalId: string,
+  userId: string,
+): Promise<boolean> {
+  if (!goalId) return false;
+  const row = await db
+    .prepare(
+      "SELECT id FROM savings_goals WHERE id = ? AND user_id = ? LIMIT 1",
+    )
+    .bind(goalId, userId)
+    .first();
+  return Boolean(row);
 }
 
 // ─── Verificación de Firebase ID Token (Web Crypto RS256 + Google JWKS) ──────
@@ -42,7 +231,7 @@ const GOOGLE_JWKS_URL =
 
 let cachedJwks: { keys: any[]; expiresAt: number } | null = null;
 
-function base64UrlToUint8Array(base64Url: string): Uint8Array {
+function base64UrlToUint8Array(base64Url: string): Uint8Array<ArrayBuffer> {
   const padding = "=".repeat((4 - (base64Url.length % 4)) % 4);
   const base64 = (base64Url + padding).replace(/-/g, "+").replace(/_/g, "/");
   const rawData = atob(base64);
@@ -231,14 +420,32 @@ function toCamelCaseCategory(row: any) {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === "OPTIONS") {
-      return new Response(null, { headers: CORS_HEADERS });
+      return new Response(null, { headers: SECURITY_HEADERS });
     }
 
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
 
-    // ─── Autenticación: Firebase JWT (o fallback a API_TOKEN para pruebas) ──
+    // ─── 1. Rate Limiting por IP (Pre-Autenticación / Anti-DDoS) ─────────────
+    const clientIp =
+      request.headers.get("CF-Connecting-IP") ||
+      request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ||
+      "unknown-ip";
+
+    const ipRate = checkRateLimit(`ip:${clientIp}`, IP_LIMIT_PER_MIN);
+    if (!ipRate.allowed) {
+      return error(
+        "Demasiadas peticiones desde tu dirección IP. Intenta nuevamente en unos segundos.",
+        429,
+        {
+          "Retry-After": String(ipRate.retryAfterSec),
+          "X-RateLimit-Remaining": "0",
+        },
+      );
+    }
+
+    // ─── 2. Autenticación: Exclusivamente Firebase ID Token (RS256) ──────────
     const authHeader = request.headers.get("Authorization") || "";
     const bearerToken = authHeader.startsWith("Bearer ")
       ? authHeader.slice(7).trim()
@@ -249,23 +456,36 @@ export default {
     }
 
     const projectId = (env.FIREBASE_PROJECT_ID || "unpo-finanzas").trim();
-    let userId = await verifyFirebaseIdToken(bearerToken, projectId);
+    const userId = await verifyFirebaseIdToken(bearerToken, projectId);
 
     if (!userId) {
-      // Fallback en caso de que se use el API_TOKEN legado
-      if (
-        env.API_TOKEN &&
-        env.API_TOKEN.trim().length > 0 &&
-        bearerToken === env.API_TOKEN.trim()
-      ) {
-        userId = "legacy";
-      } else {
-        return error("Sesión inválida o expirada", 401);
-      }
-    } else {
-      // Si es un usuario autenticado con Firebase, migrar datos 'legacy' la primera vez
-      await claimLegacyDataIfAny(env.DB, userId);
+      return error("Sesión inválida o expirada", 401);
     }
+
+    // ─── 3. Rate Limiting por Usuario (Lectura vs Escritura) ─────────────────
+    const isWriteMethod =
+      method === "POST" ||
+      method === "PATCH" ||
+      method === "PUT" ||
+      method === "DELETE";
+
+    const userRate = checkRateLimit(
+      `user:${userId}:${isWriteMethod ? "write" : "read"}`,
+      isWriteMethod ? USER_WRITE_LIMIT_PER_MIN : USER_READ_LIMIT_PER_MIN,
+    );
+    if (!userRate.allowed) {
+      return error(
+        "Has superado el límite de operaciones por minuto. Por favor espera unos segundos.",
+        429,
+        {
+          "Retry-After": String(userRate.retryAfterSec),
+          "X-RateLimit-Remaining": "0",
+        },
+      );
+    }
+
+    // Si es un usuario autenticado con Firebase, migrar datos 'legacy' la primera vez
+    await claimLegacyDataIfAny(env.DB, userId);
 
     try {
       // ─── ACCOUNTS ──────────────────────────────────────────────────────────
@@ -286,9 +506,41 @@ export default {
       }
 
       if (path === "/accounts" && method === "POST") {
-        const body: any = await request.json();
-        const id =
-          body.id || crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+        const parsed = await parseSafeJsonBody(request);
+        if (!parsed.ok) return parsed.response;
+        const body = parsed.data;
+
+        const name = sanitizeText(body.name, 80);
+        if (!name) return error("El nombre de la cuenta es obligatorio", 400);
+
+        const validTypes = [
+          "checking",
+          "savings",
+          "investment",
+          "cash",
+          "credit",
+        ];
+        const type = validTypes.includes(body.type) ? body.type : "checking";
+        const currency = sanitizeCurrency(body.currency);
+        const balance = sanitizeAmount(body.balance ?? 0, true, true) ?? 0;
+        const color = sanitizeColor(body.color, "#e23d28");
+        const icon = sanitizeIcon(body.icon, "wallet");
+        const creditLimit =
+          body.creditLimit != null
+            ? sanitizeAmount(body.creditLimit, true, false)
+            : null;
+        const closingDay =
+          body.closingDay != null
+            ? Math.min(31, Math.max(1, Math.trunc(Number(body.closingDay))))
+            : null;
+        const dueDay =
+          body.dueDay != null
+            ? Math.min(31, Math.max(1, Math.trunc(Number(body.dueDay))))
+            : null;
+
+        // ID siempre generado por el servidor (evita colisiones o inyección de ID)
+        const id = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+
         await env.DB.prepare(
           `INSERT INTO accounts (id, user_id, name, type, currency, balance, color, icon, credit_limit, closing_day, due_day)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -296,15 +548,15 @@ export default {
           .bind(
             id,
             userId,
-            body.name,
-            body.type,
-            body.currency || "ARS",
-            body.balance || 0,
-            body.color || "#e23d28",
-            body.icon || "wallet",
-            body.creditLimit ?? null,
-            body.closingDay ?? null,
-            body.dueDay ?? null,
+            name,
+            type,
+            currency,
+            balance,
+            color,
+            icon,
+            creditLimit,
+            closingDay,
+            dueDay,
           )
           .run();
 
@@ -317,7 +569,7 @@ export default {
       }
 
       if (path.startsWith("/accounts/") && method === "GET") {
-        const id = path.split("/")[2];
+        const id = sanitizeIdentifier(path.split("/")[2]);
         const row = await env.DB.prepare(
           "SELECT * FROM accounts WHERE id = ? AND user_id = ?",
         )
@@ -328,42 +580,68 @@ export default {
       }
 
       if (path.startsWith("/accounts/") && method === "PATCH") {
-        const id = path.split("/")[2];
-        const body: any = await request.json();
+        const id = sanitizeIdentifier(path.split("/")[2]);
+        const parsed = await parseSafeJsonBody(request);
+        if (!parsed.ok) return parsed.response;
+        const body = parsed.data;
+
         const fields: string[] = [];
         const values: any[] = [];
 
         if (body.name !== undefined) {
+          const cleanName = sanitizeText(body.name, 80);
+          if (!cleanName) return error("Nombre de cuenta inválido", 400);
           fields.push("name = ?");
-          values.push(body.name);
+          values.push(cleanName);
         }
         if (body.type !== undefined) {
-          fields.push("type = ?");
-          values.push(body.type);
+          const validTypes = [
+            "checking",
+            "savings",
+            "investment",
+            "cash",
+            "credit",
+          ];
+          if (validTypes.includes(body.type)) {
+            fields.push("type = ?");
+            values.push(body.type);
+          }
         }
         if (body.currency !== undefined) {
           fields.push("currency = ?");
-          values.push(body.currency);
+          values.push(sanitizeCurrency(body.currency));
         }
         if (body.color !== undefined) {
           fields.push("color = ?");
-          values.push(body.color);
+          values.push(sanitizeColor(body.color));
         }
         if (body.icon !== undefined) {
           fields.push("icon = ?");
-          values.push(body.icon);
+          values.push(sanitizeIcon(body.icon));
         }
         if (body.creditLimit !== undefined) {
           fields.push("credit_limit = ?");
-          values.push(body.creditLimit);
+          values.push(
+            body.creditLimit != null
+              ? sanitizeAmount(body.creditLimit, true, false)
+              : null,
+          );
         }
         if (body.closingDay !== undefined) {
           fields.push("closing_day = ?");
-          values.push(body.closingDay);
+          values.push(
+            body.closingDay != null
+              ? Math.min(31, Math.max(1, Math.trunc(Number(body.closingDay))))
+              : null,
+          );
         }
         if (body.dueDay !== undefined) {
           fields.push("due_day = ?");
-          values.push(body.dueDay);
+          values.push(
+            body.dueDay != null
+              ? Math.min(31, Math.max(1, Math.trunc(Number(body.dueDay))))
+              : null,
+          );
         }
 
         if (fields.length > 0) {
@@ -381,11 +659,12 @@ export default {
         )
           .bind(id, userId)
           .first();
+        if (!updated) return error("Cuenta no encontrada", 404);
         return success(toCamelCaseAccount(updated));
       }
 
       if (path.startsWith("/accounts/") && method === "DELETE") {
-        const id = path.split("/")[2];
+        const id = sanitizeIdentifier(path.split("/")[2]);
         await env.DB.prepare(
           "DELETE FROM accounts WHERE id = ? AND user_id = ?",
         )
@@ -396,7 +675,10 @@ export default {
 
       // ─── CATEGORIES (Compartidas para todos los usuarios) ──────────────────
       if (path === "/categories" && method === "GET") {
-        const type = url.searchParams.get("type");
+        const typeParam = url.searchParams.get("type");
+        const validCatTypes = ["income", "expense", "transfer"];
+        const type =
+          typeParam && validCatTypes.includes(typeParam) ? typeParam : null;
         const query = type
           ? "SELECT * FROM categories WHERE type = ? ORDER BY is_default DESC, rowid ASC"
           : "SELECT * FROM categories ORDER BY is_default DESC, rowid ASC";
@@ -414,19 +696,29 @@ export default {
 
       // ─── TRANSACTIONS ──────────────────────────────────────────────────────
       if (path === "/transactions" && method === "GET") {
-        const accountId = url.searchParams.get("accountId");
-        const categoryId = url.searchParams.get("categoryId");
-        const goalId = url.searchParams.get("goalId");
-        const type = url.searchParams.get("type");
+        const accountId = sanitizeIdentifier(url.searchParams.get("accountId"));
+        const categoryId = sanitizeIdentifier(
+          url.searchParams.get("categoryId"),
+        );
+        const goalId = sanitizeIdentifier(url.searchParams.get("goalId"));
+        const typeParam = url.searchParams.get("type");
+        const type =
+          typeParam && ["income", "expense", "transfer"].includes(typeParam)
+            ? typeParam
+            : "";
         const startDate = url.searchParams.get("startDate");
         const endDate = url.searchParams.get("endDate");
         const page = Math.max(
           1,
-          parseInt(url.searchParams.get("page") || "1", 10),
+          parseInt(url.searchParams.get("page") || "1", 10) || 1,
         );
-        const pageSize = Math.max(
-          1,
-          parseInt(url.searchParams.get("pageSize") || "30", 10),
+        // Límite máximo de 100 registros por página para evitar volcados masivos
+        const pageSize = Math.min(
+          100,
+          Math.max(
+            1,
+            parseInt(url.searchParams.get("pageSize") || "30", 10) || 30,
+          ),
         );
         const offset = (page - 1) * pageSize;
 
@@ -449,11 +741,11 @@ export default {
           conditions.push("type = ?");
           bindings.push(type);
         }
-        if (startDate) {
+        if (startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
           conditions.push("date >= ?");
           bindings.push(startDate);
         }
-        if (endDate) {
+        if (endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
           conditions.push("date <= ?");
           bindings.push(endDate);
         }
@@ -482,9 +774,73 @@ export default {
       }
 
       if (path === "/transactions" && method === "POST") {
-        const body: any = await request.json();
-        const id =
-          body.id || crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+        const parsed = await parseSafeJsonBody(request);
+        if (!parsed.ok) return parsed.response;
+        const body = parsed.data;
+
+        const accountId = sanitizeIdentifier(body.accountId);
+        const categoryId = sanitizeIdentifier(body.categoryId);
+        const toAccountId = body.toAccountId
+          ? sanitizeIdentifier(body.toAccountId)
+          : null;
+        const goalId = body.goalId ? sanitizeIdentifier(body.goalId) : null;
+
+        const validTxTypes = ["income", "expense", "transfer"];
+        if (!validTxTypes.includes(body.type)) {
+          return error("Tipo de transacción inválido", 400);
+        }
+
+        const amount = sanitizeAmount(body.amount, false, false);
+        if (amount === null) {
+          return error("El monto debe ser un número positivo válido", 400);
+        }
+
+        // ── RLS: Verificar que la cuenta origen pertenezca al usuario autenticado
+        const ownsOriginAccount = await verifyAccountOwnership(
+          env.DB,
+          accountId,
+          userId,
+        );
+        if (!ownsOriginAccount) {
+          return error(
+            "Acceso denegado: la cuenta origen no existe o no te pertenece",
+            403,
+          );
+        }
+
+        // ── RLS: Si hay cuenta destino, verificar que también pertenezca al usuario
+        if (toAccountId) {
+          const ownsDestAccount = await verifyAccountOwnership(
+            env.DB,
+            toAccountId,
+            userId,
+          );
+          if (!ownsDestAccount) {
+            return error(
+              "Acceso denegado: la cuenta destino no existe o no te pertenece",
+              403,
+            );
+          }
+        }
+
+        // ── RLS: Si hay meta asociada, verificar que pertenezca al usuario
+        if (goalId) {
+          const ownsGoal = await verifyGoalOwnership(env.DB, goalId, userId);
+          if (!ownsGoal) {
+            return error(
+              "Acceso denegado: la meta de ahorro no existe o no te pertenece",
+              403,
+            );
+          }
+        }
+
+        const id = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+        const description = sanitizeText(body.description, 160);
+        const note =
+          body.note != null ? sanitizeText(body.note, 400) || null : null;
+        const currency = sanitizeCurrency(body.currency);
+        const date = sanitizeDate(body.date);
+
         await env.DB.prepare(
           `INSERT INTO transactions (id, user_id, account_id, category_id, type, amount, currency, description, note, date, to_account_id, goal_id)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -492,16 +848,16 @@ export default {
           .bind(
             id,
             userId,
-            body.accountId,
-            body.categoryId,
+            accountId,
+            categoryId,
             body.type,
-            body.amount,
-            body.currency || "ARS",
-            body.description || "",
-            body.note ?? null,
-            body.date || new Date().toISOString().slice(0, 10),
-            body.toAccountId ?? null,
-            body.goalId ?? null,
+            amount,
+            currency,
+            description,
+            note,
+            date,
+            toAccountId,
+            goalId,
           )
           .run();
 
@@ -514,7 +870,7 @@ export default {
       }
 
       if (path.startsWith("/transactions/") && method === "GET") {
-        const id = path.split("/")[2];
+        const id = sanitizeIdentifier(path.split("/")[2]);
         const row = await env.DB.prepare(
           "SELECT * FROM transactions WHERE id = ? AND user_id = ?",
         )
@@ -525,30 +881,37 @@ export default {
       }
 
       if (path.startsWith("/transactions/") && method === "PATCH") {
-        const id = path.split("/")[2];
-        const body: any = await request.json();
+        const id = sanitizeIdentifier(path.split("/")[2]);
+        const parsed = await parseSafeJsonBody(request);
+        if (!parsed.ok) return parsed.response;
+        const body = parsed.data;
+
         const fields: string[] = [];
         const values: any[] = [];
 
         if (body.description !== undefined) {
           fields.push("description = ?");
-          values.push(body.description);
+          values.push(sanitizeText(body.description, 160));
         }
         if (body.note !== undefined) {
           fields.push("note = ?");
-          values.push(body.note);
+          values.push(
+            body.note != null ? sanitizeText(body.note, 400) || null : null,
+          );
         }
         if (body.amount !== undefined) {
+          const amount = sanitizeAmount(body.amount, false, false);
+          if (amount === null) return error("Monto inválido", 400);
           fields.push("amount = ?");
-          values.push(body.amount);
+          values.push(amount);
         }
         if (body.date !== undefined) {
           fields.push("date = ?");
-          values.push(body.date);
+          values.push(sanitizeDate(body.date));
         }
         if (body.categoryId !== undefined) {
           fields.push("category_id = ?");
-          values.push(body.categoryId);
+          values.push(sanitizeIdentifier(body.categoryId));
         }
 
         if (fields.length > 0) {
@@ -566,11 +929,12 @@ export default {
         )
           .bind(id, userId)
           .first();
+        if (!updated) return error("Transacción no encontrada", 404);
         return success(toCamelCaseTransaction(updated));
       }
 
       if (path.startsWith("/transactions/") && method === "DELETE") {
-        const id = path.split("/")[2];
+        const id = sanitizeIdentifier(path.split("/")[2]);
         await env.DB.prepare(
           "DELETE FROM transactions WHERE id = ? AND user_id = ?",
         )
@@ -597,9 +961,33 @@ export default {
       }
 
       if (path === "/goals" && method === "POST") {
-        const body: any = await request.json();
-        const id =
-          body.id || crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+        const parsed = await parseSafeJsonBody(request);
+        if (!parsed.ok) return parsed.response;
+        const body = parsed.data;
+
+        const name = sanitizeText(body.name, 80);
+        if (!name) return error("El nombre de la meta es obligatorio", 400);
+
+        const targetAmount = sanitizeAmount(body.targetAmount, false, false);
+        if (targetAmount === null) {
+          return error("El monto objetivo debe ser mayor a 0", 400);
+        }
+
+        const currentAmount =
+          sanitizeAmount(body.currentAmount ?? 0, true, false) ?? 0;
+        const currency = sanitizeCurrency(body.currency);
+        const deadline =
+          body.deadline && /^\d{4}-\d{2}-\d{2}$/.test(String(body.deadline))
+            ? String(body.deadline)
+            : null;
+        const icon = sanitizeIcon(body.icon, "piggy-bank");
+        const color = sanitizeColor(body.color, "#e23d28");
+        const validStatuses = ["active", "completed", "paused"];
+        const status = validStatuses.includes(body.status)
+          ? body.status
+          : "active";
+
+        const id = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
         await env.DB.prepare(
           `INSERT INTO savings_goals (id, user_id, name, target_amount, current_amount, currency, deadline, icon, color, status)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -607,14 +995,14 @@ export default {
           .bind(
             id,
             userId,
-            body.name,
-            body.targetAmount,
-            body.currentAmount || 0,
-            body.currency || "ARS",
-            body.deadline ?? null,
-            body.icon || "piggy-bank",
-            body.color || "#e23d28",
-            body.status || "active",
+            name,
+            targetAmount,
+            currentAmount,
+            currency,
+            deadline,
+            icon,
+            color,
+            status,
           )
           .run();
 
@@ -627,7 +1015,7 @@ export default {
       }
 
       if (path.startsWith("/goals/") && method === "GET") {
-        const id = path.split("/")[2];
+        const id = sanitizeIdentifier(path.split("/")[2]);
         const row = await env.DB.prepare(
           "SELECT * FROM savings_goals WHERE id = ? AND user_id = ?",
         )
@@ -638,42 +1026,58 @@ export default {
       }
 
       if (path.startsWith("/goals/") && method === "PATCH") {
-        const id = path.split("/")[2];
-        const body: any = await request.json();
+        const id = sanitizeIdentifier(path.split("/")[2]);
+        const parsed = await parseSafeJsonBody(request);
+        if (!parsed.ok) return parsed.response;
+        const body = parsed.data;
+
         const fields: string[] = [];
         const values: any[] = [];
 
         if (body.name !== undefined) {
+          const cleanName = sanitizeText(body.name, 80);
+          if (!cleanName) return error("Nombre de meta inválido", 400);
           fields.push("name = ?");
-          values.push(body.name);
+          values.push(cleanName);
         }
         if (body.targetAmount !== undefined) {
+          const targetAmount = sanitizeAmount(body.targetAmount, false, false);
+          if (targetAmount === null) return error("Monto objetivo inválido", 400);
           fields.push("target_amount = ?");
-          values.push(body.targetAmount);
+          values.push(targetAmount);
         }
         if (body.currentAmount !== undefined) {
+          const currentAmount = sanitizeAmount(body.currentAmount, true, false);
+          if (currentAmount === null) return error("Monto actual inválido", 400);
           fields.push("current_amount = ?");
-          values.push(body.currentAmount);
+          values.push(currentAmount);
         }
         if (body.currency !== undefined) {
           fields.push("currency = ?");
-          values.push(body.currency);
+          values.push(sanitizeCurrency(body.currency));
         }
         if (body.deadline !== undefined) {
           fields.push("deadline = ?");
-          values.push(body.deadline);
+          values.push(
+            body.deadline && /^\d{4}-\d{2}-\d{2}$/.test(String(body.deadline))
+              ? String(body.deadline)
+              : null,
+          );
         }
         if (body.icon !== undefined) {
           fields.push("icon = ?");
-          values.push(body.icon);
+          values.push(sanitizeIcon(body.icon, "piggy-bank"));
         }
         if (body.color !== undefined) {
           fields.push("color = ?");
-          values.push(body.color);
+          values.push(sanitizeColor(body.color));
         }
         if (body.status !== undefined) {
-          fields.push("status = ?");
-          values.push(body.status);
+          const validStatuses = ["active", "completed", "paused"];
+          if (validStatuses.includes(body.status)) {
+            fields.push("status = ?");
+            values.push(body.status);
+          }
         }
 
         if (fields.length > 0) {
@@ -691,11 +1095,12 @@ export default {
         )
           .bind(id, userId)
           .first();
+        if (!updated) return error("Meta no encontrada", 404);
         return success(toCamelCaseGoal(updated));
       }
 
       if (path.startsWith("/goals/") && method === "DELETE") {
-        const id = path.split("/")[2];
+        const id = sanitizeIdentifier(path.split("/")[2]);
         await env.DB.prepare(
           "DELETE FROM savings_goals WHERE id = ? AND user_id = ?",
         )
@@ -710,8 +1115,15 @@ export default {
         path.endsWith("/contribute") &&
         method === "POST"
       ) {
-        const goalId = path.split("/")[2];
-        const body: any = await request.json();
+        const goalId = sanitizeIdentifier(path.split("/")[2]);
+        const parsed = await parseSafeJsonBody(request);
+        if (!parsed.ok) return parsed.response;
+        const body = parsed.data;
+
+        const accountId = sanitizeIdentifier(body.accountId);
+        const amount = sanitizeAmount(body.amount, false, false);
+        if (amount === null) return error("Monto de aporte inválido", 400);
+
         const goal = await env.DB.prepare(
           "SELECT * FROM savings_goals WHERE id = ? AND user_id = ?",
         )
@@ -719,8 +1131,23 @@ export default {
           .first();
         if (!goal) return error("Meta no encontrada", 404);
 
+        // ── RLS: Verificar que la cuenta origen pertenezca al mismo usuario
+        const ownsAccount = await verifyAccountOwnership(
+          env.DB,
+          accountId,
+          userId,
+        );
+        if (!ownsAccount) {
+          return error(
+            "Acceso denegado: la cuenta seleccionada no te pertenece",
+            403,
+          );
+        }
+
         const txId = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
-        const date = body.date || new Date().toISOString().slice(0, 10);
+        const date = sanitizeDate(body.date);
+        const note =
+          body.note != null ? sanitizeText(body.note, 400) || null : null;
 
         await env.DB.prepare(
           `INSERT INTO transactions (id, user_id, account_id, category_id, type, amount, currency, description, note, date, goal_id)
@@ -729,11 +1156,11 @@ export default {
           .bind(
             txId,
             userId,
-            body.accountId,
-            body.amount,
+            accountId,
+            amount,
             goal.currency,
-            `Aporte a meta: ${goal.name}`,
-            body.note ?? null,
+            sanitizeText(`Aporte a meta: ${goal.name}`, 160),
+            note,
             date,
             goalId,
           )
@@ -762,8 +1189,15 @@ export default {
         path.endsWith("/withdraw") &&
         method === "POST"
       ) {
-        const goalId = path.split("/")[2];
-        const body: any = await request.json();
+        const goalId = sanitizeIdentifier(path.split("/")[2]);
+        const parsed = await parseSafeJsonBody(request);
+        if (!parsed.ok) return parsed.response;
+        const body = parsed.data;
+
+        const accountId = sanitizeIdentifier(body.accountId);
+        const amount = sanitizeAmount(body.amount, false, false);
+        if (amount === null) return error("Monto de retiro inválido", 400);
+
         const goal = await env.DB.prepare(
           "SELECT * FROM savings_goals WHERE id = ? AND user_id = ?",
         )
@@ -771,8 +1205,23 @@ export default {
           .first();
         if (!goal) return error("Meta no encontrada", 404);
 
+        // ── RLS: Verificar que la cuenta destino pertenezca al mismo usuario
+        const ownsAccount = await verifyAccountOwnership(
+          env.DB,
+          accountId,
+          userId,
+        );
+        if (!ownsAccount) {
+          return error(
+            "Acceso denegado: la cuenta seleccionada no te pertenece",
+            403,
+          );
+        }
+
         const txId = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
-        const date = body.date || new Date().toISOString().slice(0, 10);
+        const date = sanitizeDate(body.date);
+        const note =
+          body.note != null ? sanitizeText(body.note, 400) || null : null;
 
         await env.DB.prepare(
           `INSERT INTO transactions (id, user_id, account_id, category_id, type, amount, currency, description, note, date, goal_id)
@@ -781,11 +1230,11 @@ export default {
           .bind(
             txId,
             userId,
-            body.accountId,
-            body.amount,
+            accountId,
+            amount,
             goal.currency,
-            `Retiro de meta: ${goal.name}`,
-            body.note ?? null,
+            sanitizeText(`Retiro de meta: ${goal.name}`, 160),
+            note,
             date,
             goalId,
           )
@@ -810,14 +1259,16 @@ export default {
 
       // ─── REPORTS ───────────────────────────────────────────────────────────
       if (path === "/reports/monthly" && method === "GET") {
-        const year = parseInt(
+        const rawYear = parseInt(
           url.searchParams.get("year") || String(new Date().getFullYear()),
           10,
         );
-        const month = parseInt(
+        const rawMonth = parseInt(
           url.searchParams.get("month") || String(new Date().getMonth() + 1),
           10,
         );
+        const year = Math.min(2100, Math.max(2000, rawYear || new Date().getFullYear()));
+        const month = Math.min(12, Math.max(1, rawMonth || new Date().getMonth() + 1));
         const monthPattern = `${year}-${String(month).padStart(2, "0")}%`;
 
         const txRows = await env.DB.prepare(
@@ -894,10 +1345,11 @@ export default {
       }
 
       if (path === "/reports/annual" && method === "GET") {
-        const year = parseInt(
+        const rawYear = parseInt(
           url.searchParams.get("year") || String(new Date().getFullYear()),
           10,
         );
+        const year = Math.min(2100, Math.max(2000, rawYear || new Date().getFullYear()));
         const yearPattern = `${year}%`;
 
         const txRows = await env.DB.prepare(
@@ -1009,9 +1461,44 @@ export default {
         });
       }
 
+      // ─── SYSTEM STATS (Uso de BD y Usuarios) ───────────────────────────────
+      if (path === "/stats" && method === "GET") {
+        const statsRows = await env.DB.prepare(
+          `SELECT
+            (SELECT COUNT(DISTINCT user_id) FROM (
+              SELECT user_id FROM accounts
+              UNION
+              SELECT user_id FROM transactions
+              UNION
+              SELECT user_id FROM savings_goals
+            )) AS active_users,
+            (SELECT COUNT(*) FROM accounts) AS total_accounts,
+            (SELECT COUNT(*) FROM transactions) AS total_transactions,
+            (SELECT COUNT(*) FROM savings_goals) AS total_goals`,
+        ).all();
+
+        const row: any = statsRows.results?.[0] || {};
+        const activeUsers = Math.max(1, Number(row.active_users || 1));
+        const totalAccounts = Number(row.total_accounts || 0);
+        const totalTransactions = Number(row.total_transactions || 0);
+        const totalGoals = Number(row.total_goals || 0);
+        const dbSizeBytes =
+          Number(statsRows.meta?.size_after) ||
+          (totalAccounts + totalTransactions + totalGoals) * 512 + 32768;
+
+        return success({
+          activeUsers,
+          totalAccounts,
+          totalTransactions,
+          totalGoals,
+          dbSizeBytes,
+          dbQuotaBytes: 5 * 1024 * 1024 * 1024, // 5 GB límite gratuito Cloudflare D1
+        });
+      }
+
       return error("Ruta no encontrada", 404);
-    } catch (err: any) {
-      return error(err.message || "Error interno del servidor", 500);
+    } catch {
+      return error("Error interno al procesar la solicitud", 500);
     }
   },
 };

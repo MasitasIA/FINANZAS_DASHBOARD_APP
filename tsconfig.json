@@ -18,5 +18,5 @@
     "nativewind-env.d.ts",
     ".expo/types/**/*.ts"
   ],
-  "exclude": ["worker", "node_modules"]
+  "exclude": ["node_modules"]
 }

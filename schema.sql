@@ -96,13 +96,14 @@ CREATE TABLE IF NOT EXISTS savings_goals (
 
 CREATE INDEX IF NOT EXISTS idx_goals_user ON savings_goals(user_id);
 
--- ── Triggers: actualizar balance en cuentas y metas ─────────────────────────
+-- ── Triggers: actualizar balance en cuentas y metas (con aislamiento RLS por user_id) ──
 
 -- 1. Al insertar transacción
+DROP TRIGGER IF EXISTS update_balance_after_insert;
 CREATE TRIGGER IF NOT EXISTS update_balance_after_insert
 AFTER INSERT ON transactions
 BEGIN
-  -- Actualiza balance en cuenta origen
+  -- Actualiza balance en cuenta origen (solo si pertenece al mismo user_id)
   UPDATE accounts
   SET    balance    = balance + CASE
                                   WHEN NEW.type = 'income'   THEN NEW.amount
@@ -111,15 +112,15 @@ BEGIN
                                   ELSE 0
                                 END,
          updated_at = datetime('now')
-  WHERE  id = NEW.account_id;
+  WHERE  id = NEW.account_id AND user_id = NEW.user_id;
 
-  -- Si es transferencia, acredita en la cuenta destino
+  -- Si es transferencia, acredita en la cuenta destino (solo si pertenece al mismo user_id)
   UPDATE accounts
   SET    balance    = balance + NEW.amount,
          updated_at = datetime('now')
-  WHERE  id = NEW.to_account_id AND NEW.to_account_id IS NOT NULL AND NEW.type = 'transfer';
+  WHERE  id = NEW.to_account_id AND user_id = NEW.user_id AND NEW.to_account_id IS NOT NULL AND NEW.type = 'transfer';
 
-  -- Si está vinculada a una meta de ahorro
+  -- Si está vinculada a una meta de ahorro (solo si pertenece al mismo user_id)
   UPDATE savings_goals
   SET    current_amount = MAX(0, current_amount + CASE
                                                     WHEN NEW.type IN ('expense', 'transfer') THEN NEW.amount
@@ -135,10 +136,11 @@ BEGIN
                             ELSE 'active'
                           END,
          updated_at     = datetime('now')
-  WHERE  id = NEW.goal_id AND NEW.goal_id IS NOT NULL;
+  WHERE  id = NEW.goal_id AND user_id = NEW.user_id AND NEW.goal_id IS NOT NULL;
 END;
 
--- 2. Al eliminar transacción (reversión de saldos)
+-- 2. Al eliminar transacción (reversión de saldos con aislamiento RLS)
+DROP TRIGGER IF EXISTS update_balance_after_delete;
 CREATE TRIGGER IF NOT EXISTS update_balance_after_delete
 AFTER DELETE ON transactions
 BEGIN
@@ -151,13 +153,13 @@ BEGIN
                                   ELSE 0
                                 END,
          updated_at = datetime('now')
-  WHERE  id = OLD.account_id;
+  WHERE  id = OLD.account_id AND user_id = OLD.user_id;
 
   -- Si era transferencia, descuenta de la cuenta destino
   UPDATE accounts
   SET    balance    = balance - OLD.amount,
          updated_at = datetime('now')
-  WHERE  id = OLD.to_account_id AND OLD.to_account_id IS NOT NULL AND OLD.type = 'transfer';
+  WHERE  id = OLD.to_account_id AND user_id = OLD.user_id AND OLD.to_account_id IS NOT NULL AND OLD.type = 'transfer';
 
   -- Si estaba vinculada a una meta, revierte el impacto en la meta
   UPDATE savings_goals
@@ -175,10 +177,11 @@ BEGIN
                             ELSE 'active'
                           END,
          updated_at     = datetime('now')
-  WHERE  id = OLD.goal_id AND OLD.goal_id IS NOT NULL;
+  WHERE  id = OLD.goal_id AND user_id = OLD.user_id AND OLD.goal_id IS NOT NULL;
 END;
 
--- 3. Al actualizar transacción
+-- 3. Al actualizar transacción (con aislamiento RLS)
+DROP TRIGGER IF EXISTS update_balance_after_update;
 CREATE TRIGGER IF NOT EXISTS update_balance_after_update
 AFTER UPDATE ON transactions
 BEGIN
@@ -191,12 +194,12 @@ BEGIN
                                   ELSE 0
                                 END,
          updated_at = datetime('now')
-  WHERE  id = OLD.account_id;
+  WHERE  id = OLD.account_id AND user_id = OLD.user_id;
 
   UPDATE accounts
   SET    balance    = balance - OLD.amount,
          updated_at = datetime('now')
-  WHERE  id = OLD.to_account_id AND OLD.to_account_id IS NOT NULL AND OLD.type = 'transfer';
+  WHERE  id = OLD.to_account_id AND user_id = OLD.user_id AND OLD.to_account_id IS NOT NULL AND OLD.type = 'transfer';
 
   UPDATE savings_goals
   SET    current_amount = MAX(0, current_amount - CASE
@@ -205,7 +208,7 @@ BEGIN
                                                     ELSE 0
                                                   END),
          updated_at     = datetime('now')
-  WHERE  id = OLD.goal_id AND OLD.goal_id IS NOT NULL;
+  WHERE  id = OLD.goal_id AND user_id = OLD.user_id AND OLD.goal_id IS NOT NULL;
 
   -- Aplicar nuevos valores (NEW)
   UPDATE accounts
@@ -216,12 +219,12 @@ BEGIN
                                   ELSE 0
                                 END,
          updated_at = datetime('now')
-  WHERE  id = NEW.account_id;
+  WHERE  id = NEW.account_id AND user_id = NEW.user_id;
 
   UPDATE accounts
   SET    balance    = balance + NEW.amount,
          updated_at = datetime('now')
-  WHERE  id = NEW.to_account_id AND NEW.to_account_id IS NOT NULL AND NEW.type = 'transfer';
+  WHERE  id = NEW.to_account_id AND user_id = NEW.user_id AND NEW.to_account_id IS NOT NULL AND NEW.type = 'transfer';
 
   UPDATE savings_goals
   SET    current_amount = MAX(0, current_amount + CASE
@@ -238,6 +241,6 @@ BEGIN
                             ELSE 'active'
                           END,
          updated_at     = datetime('now')
-  WHERE  id = NEW.goal_id AND NEW.goal_id IS NOT NULL;
+  WHERE  id = NEW.goal_id AND user_id = NEW.user_id AND NEW.goal_id IS NOT NULL;
 END;
 

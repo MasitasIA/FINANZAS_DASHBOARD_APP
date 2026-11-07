@@ -15,6 +15,7 @@ import type {
   MonthlyReport,
   PaginatedResponse,
   SavingsGoal,
+  SystemStats,
   Transaction,
 } from "@/types";
 import { colors } from "../../../tailwind.config";
@@ -690,6 +691,19 @@ export const mockReportHandlers = {
       byExpenseCategory,
       byIncomeCategory,
       monthlyBreakdown,
+    });
+  },
+
+  async stats(): Promise<ApiResponse<SystemStats>> {
+    await delay(80);
+    const totalRecords = accounts.length + transactions.length + goals.length;
+    return ok({
+      activeUsers: 1,
+      totalAccounts: accounts.length,
+      totalTransactions: transactions.length,
+      totalGoals: goals.length,
+      dbSizeBytes: 32768 + totalRecords * 512,
+      dbQuotaBytes: 5 * 1024 * 1024 * 1024,
     });
   },
 };

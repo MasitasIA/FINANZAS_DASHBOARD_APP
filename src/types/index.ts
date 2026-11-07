@@ -133,6 +133,15 @@ export interface CategorySummary {
   percentage: number;
 }
 
+export interface SystemStats {
+  activeUsers: number;
+  totalAccounts: number;
+  totalTransactions: number;
+  totalGoals: number;
+  dbSizeBytes: number;
+  dbQuotaBytes: number;
+}
+
 // ─── API Response ─────────────────────────────────────────────────────────────
 
 export interface ApiResponse<T> {

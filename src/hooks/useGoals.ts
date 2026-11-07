@@ -16,6 +16,7 @@ export const reportKeys = {
     ["reports", "monthly", year, month] as const,
   annual: (year: number) =>
     ["reports", "annual", year] as const,
+  stats: () => ["reports", "stats"] as const,
 };
 
 // ─── Goals Queries & Mutations ───────────────────────────────────────────────
@@ -131,6 +132,15 @@ export function useAnnualReport(year?: number) {
   return useQuery({
     queryKey: reportKeys.annual(targetYear),
     queryFn:  () => reportsService.annual(targetYear),
+    staleTime: 1000 * 60 * 10, // 10 minutos
+  });
+}
+
+export function useSystemStats(enabled = true) {
+  return useQuery({
+    queryKey: reportKeys.stats(),
+    queryFn:  () => reportsService.stats(),
+    enabled,
     staleTime: 1000 * 60 * 10, // 10 minutos
   });
 }

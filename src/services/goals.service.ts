@@ -11,6 +11,7 @@ import type {
   MonthlyReport,
   PaginatedResponse,
   SavingsGoal,
+  SystemStats,
   Transaction,
 } from "@/types";
 
@@ -82,4 +83,9 @@ export const reportsService = {
     USE_MOCK
       ? mockReportHandlers.annual(year)
       : api.get<ApiResponse<AnnualReport>>(`/reports/annual?year=${year}`),
+
+  stats: (): Promise<ApiResponse<SystemStats>> =>
+    USE_MOCK
+      ? mockReportHandlers.stats()
+      : api.get<ApiResponse<SystemStats>>("/stats"),
 };

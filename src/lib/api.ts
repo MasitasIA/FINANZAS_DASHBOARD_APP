@@ -7,7 +7,6 @@
 import { auth } from "./firebase";
 
 const BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? "").trim();
-const FALLBACK_TOKEN = (process.env.EXPO_PUBLIC_API_TOKEN ?? "").trim();
 
 interface RequestOptions extends Omit<RequestInit, "body"> {
   body?: unknown;
@@ -20,9 +19,9 @@ async function getBearerToken(): Promise<string> {
       return await currentUser.getIdToken();
     }
   } catch {
-    // Fallback al token estático si existiera
+    // Si no hay sesión activa o falla la obtención del token, devolver cadena vacía
   }
-  return FALLBACK_TOKEN;
+  return "";
 }
 
 async function request<T>(
