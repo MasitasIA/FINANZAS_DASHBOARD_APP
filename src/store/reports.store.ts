@@ -1,16 +1,19 @@
 import { create } from "zustand";
 
-export type ReportView = "monthly" | "consolidated";
+export type ReportView = "monthly" | "consolidated" | "projection";
 export type ReportCategoryType = "expense" | "income";
+export type ProjectionScenario = "realistic" | "optimistic" | "conservative";
 
 interface ReportsState {
   reportView: ReportView;
   categoryType: ReportCategoryType;
+  projectionScenario: ProjectionScenario;
   selectedYear: number;
   selectedMonth: number; // 1-12
 
   setReportView: (view: ReportView) => void;
   setCategoryType: (type: ReportCategoryType) => void;
+  setProjectionScenario: (scenario: ProjectionScenario) => void;
   setYear: (year: number) => void;
   setMonth: (year: number, month: number) => void;
   prevYear: () => void;
@@ -24,11 +27,13 @@ const now = new Date();
 export const useReportsStore = create<ReportsState>((set) => ({
   reportView: "monthly",
   categoryType: "expense",
+  projectionScenario: "realistic",
   selectedYear: now.getFullYear(),
   selectedMonth: now.getMonth() + 1,
 
   setReportView: (reportView) => set({ reportView }),
   setCategoryType: (categoryType) => set({ categoryType }),
+  setProjectionScenario: (projectionScenario) => set({ projectionScenario }),
   setYear: (selectedYear) => set({ selectedYear }),
   setMonth: (selectedYear, selectedMonth) =>
     set({ selectedYear, selectedMonth }),

@@ -12,11 +12,12 @@ import Constants from "expo-constants";
 import * as Updates from "expo-updates";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { signOut } from "firebase/auth";
-import { Typography } from "@/components/ui";
+import { Card, Typography } from "@/components/ui";
 import { AccountCard } from "@/components/accounts/AccountCard";
 import { GoalCard } from "@/components/goals/GoalCard";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useGoals, useSystemStats } from "@/hooks/useGoals";
+import { useRecurringExpenses } from "@/hooks/useRecurringExpenses";
 import { auth } from "@/lib/firebase";
 import { formatCurrency } from "@/utils/formatters";
 import appConfig from "../../app.json";
@@ -40,6 +41,8 @@ export default function DashboardScreen() {
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const { data: accountsData, isLoading: loadingAccounts } = useAccounts();
   const { data: goalsData, isLoading: loadingGoals } = useGoals();
+  const { data: recurringData, isLoading: loadingRecurring } =
+    useRecurringExpenses();
   const { data: statsData, isLoading: loadingStats } =
     useSystemStats(showInfoModal);
   const systemStats = statsData?.data;
@@ -78,6 +81,7 @@ export default function DashboardScreen() {
 
   const accounts = accountsData?.data ?? [];
   const goals = goalsData?.data ?? [];
+  const recurringExpenses = recurringData?.data ?? [];
 
   // Ahorro acumulado en metas por moneda
   const goalsByCurrency = goals.reduce<Record<string, number>>((acc, g) => {
@@ -86,10 +90,25 @@ export default function DashboardScreen() {
     return acc;
   }, {});
 
-  // Balances desglosados por moneda (incluye cuentas + metas ahorradas)
+  // Deuda / saldos negativos acumulados por moneda (tarjetas de crédito + cuentas en negativo)
+  const debtByCurrency = accounts.reduce<Record<string, number>>((acc, a) => {
+    const curr = a.currency || "ARS";
+    const negativeAmount =
+      a.type === "credit"
+        ? Math.abs(a.balance)
+        : a.balance < 0
+          ? Math.abs(a.balance)
+          : 0;
+    acc[curr] = (acc[curr] ?? 0) + negativeAmount;
+    return acc;
+  }, {});
+
+  // Balances desglosados por moneda (incluye cuentas positivas, resta saldos negativos/tarjetas y suma metas)
   const balancesByCurrency = accounts.reduce<Record<string, number>>(
     (acc, a) => {
-      acc[a.currency] = (acc[a.currency] ?? 0) + a.balance;
+      const effectiveBalance =
+        a.type === "credit" ? -Math.abs(a.balance) : a.balance;
+      acc[a.currency] = (acc[a.currency] ?? 0) + effectiveBalance;
       return acc;
     },
     {},
@@ -192,7 +211,11 @@ export default function DashboardScreen() {
               <Typography
                 numberOfLines={1}
                 adjustsFontSizeToFit
-                className="text-4xl font-bold text-text-primary"
+                className={`text-4xl font-bold ${
+                  (balancesByCurrency[displayCurrencies[0]] ?? 0) >= 0
+                    ? "text-text-primary"
+                    : "text-danger-500"
+                }`}
               >
                 {formatCurrency(
                   balancesByCurrency[displayCurrencies[0]] ?? 0,
@@ -200,9 +223,14 @@ export default function DashboardScreen() {
                 )}
               </Typography>
               <Typography variant="caption" muted className="mt-1">
-                {goalsByCurrency[displayCurrencies[0]] > 0
-                  ? `Incluye ${formatCurrency(goalsByCurrency[displayCurrencies[0]], displayCurrencies[0] as any)} en metas de ahorro`
-                  : `Moneda: ${displayCurrencies[0]}`}
+                {goalsByCurrency[displayCurrencies[0]] > 0 &&
+                debtByCurrency[displayCurrencies[0]] > 0
+                  ? `+${formatCurrency(goalsByCurrency[displayCurrencies[0]], displayCurrencies[0] as any)} en metas • -${formatCurrency(debtByCurrency[displayCurrencies[0]], displayCurrencies[0] as any)} en saldos negativos/deuda`
+                  : goalsByCurrency[displayCurrencies[0]] > 0
+                    ? `Incluye ${formatCurrency(goalsByCurrency[displayCurrencies[0]], displayCurrencies[0] as any)} en metas de ahorro`
+                    : debtByCurrency[displayCurrencies[0]] > 0
+                      ? `Resta -${formatCurrency(debtByCurrency[displayCurrencies[0]], displayCurrencies[0] as any)} de saldos negativos/deuda`
+                      : `Moneda: ${displayCurrencies[0]}`}
               </Typography>
             </View>
           ) : (
@@ -210,6 +238,7 @@ export default function DashboardScreen() {
               {displayCurrencies.map((curr) => {
                 const bal = balancesByCurrency[curr] ?? 0;
                 const saved = goalsByCurrency[curr] ?? 0;
+                const debt = debtByCurrency[curr] ?? 0;
                 return (
                   <View
                     key={curr}
@@ -242,13 +271,19 @@ export default function DashboardScreen() {
                     >
                       {formatCurrency(bal, curr as any)}
                     </Typography>
-                    {saved > 0 && (
+                    {(saved > 0 || debt > 0) && (
                       <Typography
                         variant="caption"
                         muted
                         className="text-[10px] mt-0.5"
                       >
-                        +{formatCurrency(saved, curr as any)} en metas
+                        {saved > 0
+                          ? `+${formatCurrency(saved, curr as any)} metas`
+                          : ""}
+                        {saved > 0 && debt > 0 ? " • " : ""}
+                        {debt > 0
+                          ? `-${formatCurrency(debt, curr as any)} deuda`
+                          : ""}
                       </Typography>
                     )}
                   </View>
@@ -322,6 +357,138 @@ export default function DashboardScreen() {
               ))
           )}
         </View>
+
+        {/* ── Gastos e Ingresos Automáticos ──────────────────── */}
+        <View className="mt-6 gap-3">
+          <View className="flex-row items-center justify-between mb-1">
+            <View className="flex-row items-center gap-2">
+              <Typography variant="h2">Automáticos</Typography>
+            </View>
+            <Typography
+              variant="caption"
+              className="text-primary-600 font-semibold"
+              onPress={() => router.push("/recurring" as any)}
+            >
+              Gestionar
+            </Typography>
+          </View>
+
+          {loadingRecurring ? (
+            <ActivityIndicator color={colors.primary[500]} />
+          ) : recurringExpenses.filter((r) => r.isActive).length === 0 ? (
+            <Pressable onPress={() => router.push("/recurring" as any)}>
+              <Card className="flex-row items-center justify-between p-3.5">
+                <View className="flex-row items-center gap-3 flex-1 mr-2">
+                  <View className="w-9 h-9 rounded-2xl bg-primary-600/15 items-center justify-center">
+                    <MaterialCommunityIcons
+                      name="calendar-sync"
+                      size={18}
+                      color={colors.primary[600]}
+                    />
+                  </View>
+                  <View className="flex-1">
+                    <Typography className="font-semibold text-sm text-text-primary">
+                      Configura tus gastos e ingresos fijos
+                    </Typography>
+                    <Typography variant="caption" muted>
+                      Guarda fecha, monto estimado, nombre y cuenta vinculada
+                    </Typography>
+                  </View>
+                </View>
+                <MaterialCommunityIcons
+                  name="chevron-right"
+                  size={20}
+                  color={colors.text.muted}
+                />
+              </Card>
+            </Pressable>
+          ) : (
+            <>
+              {recurringExpenses
+                .filter((r) => r.isActive)
+                .slice(0, 4)
+                .map((item) => {
+                  const linkedAcc = accounts.find(
+                    (a) => a.id === item.accountId,
+                  );
+                  const accName =
+                    linkedAcc?.name ?? item.accountName ?? "Cuenta";
+                  const accColor =
+                    linkedAcc?.color ??
+                    item.accountColor ??
+                    colors.primary[500];
+                  const isIncome = (item.type ?? "expense") === "income";
+                  return (
+                    <Pressable
+                      key={item.id}
+                      onPress={() => router.push("/recurring" as any)}
+                    >
+                      <Card className="flex-row items-center justify-between p-3.5">
+                        <View className="flex-row items-center gap-3 flex-1 mr-3">
+                          <View
+                            className="w-10 h-10 rounded-2xl items-center justify-center shrink-0"
+                            style={{ backgroundColor: `${item.color}20` }}
+                          >
+                            <MaterialCommunityIcons
+                              name={
+                                (item.icon as keyof typeof MaterialCommunityIcons.glyphMap) ||
+                                (isIncome ? "cash-plus" : "calendar-sync")
+                              }
+                              size={20}
+                              color={item.color || colors.primary[500]}
+                            />
+                          </View>
+                          <View className="flex-1 gap-0.5">
+                            <Typography
+                              numberOfLines={1}
+                              className="font-semibold text-sm text-text-primary"
+                            >
+                              {item.name}
+                            </Typography>
+                            <View className="flex-row items-center gap-1.5">
+                              <View
+                                className="w-2 h-2 rounded-full shrink-0"
+                                style={{ backgroundColor: accColor }}
+                              />
+                              <Typography
+                                variant="caption"
+                                muted
+                                numberOfLines={1}
+                                className="flex-1"
+                              >
+                                {accName}
+                              </Typography>
+                            </View>
+                          </View>
+                        </View>
+
+                        <View className="items-end shrink-0">
+                          <Typography
+                            numberOfLines={1}
+                            adjustsFontSizeToFit
+                            className={`font-bold text-sm ${
+                              isIncome ? "text-success-500" : "text-danger-500"
+                            }`}
+                          >
+                            {isIncome ? "+" : "-"}
+                            {formatCurrency(item.amount, item.currency)}
+                          </Typography>
+                          <Typography
+                            variant="caption"
+                            muted
+                            className="text-[11px] mt-0.5"
+                          >
+                            Día {item.dueDay} ({item.dueDate})
+                          </Typography>
+                        </View>
+                      </Card>
+                    </Pressable>
+                  );
+                })}
+            </>
+          )}
+        </View>
+
         {/* ── Pie sutil: Información de la app ───────────────── */}
         <Pressable
           onPress={() => setShowInfoModal(true)}

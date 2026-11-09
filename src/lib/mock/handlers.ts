@@ -14,9 +14,12 @@ import type {
   GoalWithdrawPayload,
   MonthlyReport,
   PaginatedResponse,
+  RecurringExpense,
+  RecurringProcessResult,
   SavingsGoal,
   SystemStats,
   Transaction,
+  UserSettings,
 } from "@/types";
 import { colors } from "../../../tailwind.config";
 import {
@@ -25,6 +28,7 @@ import {
   mockAccounts,
   mockCategories,
   mockGoals,
+  mockRecurringExpenses,
   mockTransactions,
 } from "./db";
 
@@ -32,6 +36,7 @@ import {
 let accounts: Account[] = [...mockAccounts];
 let transactions: Transaction[] = [...mockTransactions];
 let goals: SavingsGoal[] = [...mockGoals];
+let recurringExpenses: RecurringExpense[] = [...mockRecurringExpenses];
 
 // ─── Util ─────────────────────────────────────────────────────────────────────
 
@@ -706,4 +711,206 @@ export const mockReportHandlers = {
       dbQuotaBytes: 5 * 1024 * 1024 * 1024,
     });
   },
+};
+
+// ─── Gastos Automáticos / Recurrentes ─────────────────────────────────────────
+
+export const mockRecurringExpenseHandlers = {
+  async list(): Promise<PaginatedResponse<RecurringExpense>> {
+    await delay();
+    const enriched = recurringExpenses.map((r) => {
+      const acc = accounts.find((a) => a.id === r.accountId);
+      return {
+        ...r,
+        accountName: acc?.name ?? r.accountName,
+        accountColor: acc?.color ?? r.accountColor,
+      };
+    });
+    return paginate(enriched);
+  },
+
+  async create(
+    payload: Omit<RecurringExpense, "id" | "createdAt" | "updatedAt">,
+  ): Promise<ApiResponse<RecurringExpense>> {
+    await delay();
+    const acc = accounts.find((a) => a.id === payload.accountId);
+    const now = new Date().toISOString();
+    const newItem: RecurringExpense = {
+      ...payload,
+      id: `rec-${generateId()}`,
+      accountName: acc?.name,
+      accountColor: acc?.color,
+      createdAt: now,
+      updatedAt: now,
+    };
+    recurringExpenses.push(newItem);
+    return ok(newItem);
+  },
+
+  async update(
+    id: string,
+    payload: Partial<Omit<RecurringExpense, "id" | "createdAt" | "updatedAt">>,
+  ): Promise<ApiResponse<RecurringExpense>> {
+    await delay();
+    const idx = recurringExpenses.findIndex((r) => r.id === id);
+    if (idx === -1) throw new Error("Gasto automático no encontrado");
+    const nextAccId = payload.accountId ?? recurringExpenses[idx].accountId;
+    const acc = accounts.find((a) => a.id === nextAccId);
+    recurringExpenses[idx] = {
+      ...recurringExpenses[idx],
+      ...payload,
+      accountName: acc?.name ?? recurringExpenses[idx].accountName,
+      accountColor: acc?.color ?? recurringExpenses[idx].accountColor,
+      updatedAt: new Date().toISOString(),
+    };
+    return ok(recurringExpenses[idx]);
+  },
+
+  async remove(id: string): Promise<ApiResponse<null>> {
+    await delay();
+    recurringExpenses = recurringExpenses.filter((r) => r.id !== id);
+    return ok(null);
+  },
+
+  async pay(
+    id: string,
+    payload?: { amount?: number; updateBaseAmount?: boolean; note?: string },
+  ): Promise<ApiResponse<RecurringExpense>> {
+    await delay();
+    const idx = recurringExpenses.findIndex((r) => r.id === id);
+    if (idx === -1) throw new Error("Registro automático no encontrado");
+    const item = recurringExpenses[idx];
+    const today = new Date().toISOString().slice(0, 10);
+    const effectiveAmount = payload?.amount ?? item.amount;
+    const isIncome = item.type === "income";
+
+    // Acreditar o descontar en la cuenta asociada
+    const accIdx = accounts.findIndex((a) => a.id === item.accountId);
+    if (accIdx !== -1) {
+      accounts[accIdx] = {
+        ...accounts[accIdx],
+        balance: isIncome
+          ? accounts[accIdx].balance + effectiveAmount
+          : accounts[accIdx].balance - effectiveAmount,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
+    // Registrar transacción
+    transactions.unshift({
+      id: `tx-${generateId()}`,
+      accountId: item.accountId,
+      categoryId:
+        item.categoryId || (isIncome ? "cat-salary" : "cat-services"),
+      type: isIncome ? "income" : "expense",
+      amount: effectiveAmount,
+      currency: item.currency,
+      description: `${isIncome ? "Ingreso automático" : "Gasto automático"}: ${item.name}`,
+      note:
+        payload?.note ??
+        (isIncome
+          ? "Acreditación de ingreso automático"
+          : "Pago de gasto automático"),
+      date: today,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const nextDue = new Date(`${item.dueDate || today}T12:00:00Z`);
+    if (item.frequency === "weekly") {
+      nextDue.setUTCDate(nextDue.getUTCDate() + 7);
+    } else if (item.frequency === "yearly") {
+      nextDue.setUTCFullYear(nextDue.getUTCFullYear() + 1);
+    } else {
+      nextDue.setUTCMonth(nextDue.getUTCMonth() + 1);
+    }
+
+    recurringExpenses[idx] = {
+      ...item,
+      amount:
+        payload?.updateBaseAmount && payload?.amount
+          ? payload.amount
+          : item.amount,
+      lastPaidDate: today,
+      dueDate: nextDue.toISOString().slice(0, 10),
+      updatedAt: new Date().toISOString(),
+    };
+
+    return ok(recurringExpenses[idx]);
+  },
+
+  async skip(id: string): Promise<ApiResponse<RecurringExpense>> {
+    await delay(80);
+    const idx = recurringExpenses.findIndex((r) => r.id === id);
+    if (idx === -1) throw new Error("Registro automático no encontrado");
+    const item = recurringExpenses[idx];
+    const today = new Date().toISOString().slice(0, 10);
+    const nextDue = new Date(`${item.dueDate || today}T12:00:00Z`);
+    if (item.frequency === "weekly") {
+      nextDue.setUTCDate(nextDue.getUTCDate() + 7);
+    } else if (item.frequency === "yearly") {
+      nextDue.setUTCFullYear(nextDue.getUTCFullYear() + 1);
+    } else {
+      nextDue.setUTCMonth(nextDue.getUTCMonth() + 1);
+    }
+    recurringExpenses[idx] = {
+      ...item,
+      dueDate: nextDue.toISOString().slice(0, 10),
+      updatedAt: new Date().toISOString(),
+    };
+    return ok(recurringExpenses[idx]);
+  },
+
+  async getSettings(): Promise<ApiResponse<UserSettings>> {
+    await delay(50);
+    return ok(mockUserSettings);
+  },
+
+  async updateSettings(reminderTime: string): Promise<ApiResponse<UserSettings>> {
+    await delay(80);
+    mockUserSettings = {
+      ...mockUserSettings,
+      reminderTime,
+      updatedAt: new Date().toISOString(),
+    };
+    return ok(mockUserSettings);
+  },
+
+  async processDue(payload?: {
+    localDate?: string;
+    localTime?: string;
+  }): Promise<ApiResponse<RecurringProcessResult>> {
+    await delay(80);
+    const localDate = payload?.localDate ?? new Date().toISOString().slice(0, 10);
+    const localTime = payload?.localTime ?? "09:00";
+    const appliedFixed: RecurringExpense[] = [];
+    const dueVariable: RecurringExpense[] = [];
+
+    for (const item of [...recurringExpenses]) {
+      if (!item.isActive || item.dueDate > localDate) continue;
+      if (!item.isVariable) {
+        const res = await this.pay(item.id);
+        appliedFixed.push(res.data);
+      } else {
+        const isPastDay = item.dueDate < localDate;
+        const isTodayAtOrAfterHour =
+          item.dueDate === localDate && localTime >= mockUserSettings.reminderTime;
+        if (isPastDay || isTodayAtOrAfterHour) {
+          dueVariable.push(item);
+        }
+      }
+    }
+
+    return ok({
+      appliedFixed,
+      dueVariable,
+      settings: mockUserSettings,
+    });
+  },
+};
+
+let mockUserSettings: UserSettings = {
+  userId: "mock-user",
+  reminderTime: "09:00",
+  updatedAt: new Date().toISOString(),
 };

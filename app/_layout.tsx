@@ -25,6 +25,7 @@ import {
   View,
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { RecurringAutoProcessor } from "@/components/recurring/RecurringAutoProcessor";
 import { Typography } from "@/components/ui";
 import { auth, isFirebaseConfigured } from "@/lib/firebase";
 
@@ -147,6 +148,9 @@ export default function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <StatusBar style="dark" />
       <NavigationBar hidden style="light" />
+      <RecurringAutoProcessor
+        enabled={USE_MOCK || !isFirebaseConfigured || Boolean(user)}
+      />
       {updateReady && (
         <View className="bg-primary-600 px-4 pt-10 pb-2.5 flex-row items-center justify-between">
           <View className="flex-row items-center gap-2 flex-1 mr-2">
@@ -226,6 +230,16 @@ export default function RootLayout() {
             headerStyle: { backgroundColor: colors.surface[800] },
             headerTintColor: colors.text.primary,
             headerTitle: "Nueva transacción",
+          }}
+        />
+        <Stack.Screen
+          name="recurring/index"
+          options={{
+            headerShown: true,
+            headerStyle: { backgroundColor: colors.surface[800] },
+            headerTintColor: colors.text.primary,
+            headerTitle: "Gastos e ingresos automáticos",
+            headerBackButtonDisplayMode: "minimal",
           }}
         />
       </Stack>

@@ -96,6 +96,37 @@ CREATE TABLE IF NOT EXISTS savings_goals (
 
 CREATE INDEX IF NOT EXISTS idx_goals_user ON savings_goals(user_id);
 
+-- ── Gastos e Ingresos Automáticos / Recurrentes (Tabla especial por usuario) ──
+CREATE TABLE IF NOT EXISTS recurring_expenses (
+  id             TEXT    PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  user_id        TEXT    NOT NULL DEFAULT 'legacy',
+  type           TEXT    NOT NULL DEFAULT 'expense' CHECK (type IN ('expense','income')),
+  account_id     TEXT    NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  category_id    TEXT    NOT NULL DEFAULT 'cat-services' REFERENCES categories(id),
+  name           TEXT    NOT NULL,
+  amount         REAL    NOT NULL CHECK (amount > 0),
+  currency       TEXT    NOT NULL DEFAULT 'ARS' CHECK (currency IN ('ARS','USD','EUR')),
+  due_date       TEXT    NOT NULL DEFAULT (date('now')),
+  due_day        INTEGER NOT NULL DEFAULT 1 CHECK (due_day BETWEEN 1 AND 31),
+  frequency      TEXT    NOT NULL DEFAULT 'monthly' CHECK (frequency IN ('monthly','yearly','weekly')),
+  is_variable    INTEGER NOT NULL DEFAULT 0,
+  icon           TEXT    NOT NULL DEFAULT 'calendar-sync',
+  color          TEXT    NOT NULL DEFAULT '#e23d28',
+  is_active      INTEGER NOT NULL DEFAULT 1,
+  last_paid_date TEXT,
+  created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+  updated_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_recurring_expenses_user ON recurring_expenses(user_id, due_day ASC);
+
+-- ── Configuración especial por usuario (Hora de aviso para montos variables) ──
+CREATE TABLE IF NOT EXISTS user_settings (
+  user_id       TEXT PRIMARY KEY,
+  reminder_time TEXT NOT NULL DEFAULT '09:00',
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- ── Triggers: actualizar balance en cuentas y metas (con aislamiento RLS por user_id) ──
 
 -- 1. Al insertar transacción

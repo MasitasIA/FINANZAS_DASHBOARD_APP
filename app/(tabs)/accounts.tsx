@@ -33,23 +33,33 @@ export default function AccountsScreen() {
 
     const bankBalance = currAccounts
       .filter((a) => a.type !== "credit")
-      .reduce((sum, a) => sum + (a.balance > 0 ? a.balance : 0), 0);
+      .reduce((sum, a) => sum + a.balance, 0);
 
     const savedInGoals = currGoals.reduce(
       (sum, g) => sum + (g.currentAmount || 0),
       0,
     );
 
-    // Dinero disponible total: cuentas + lo ahorrado en metas
+    // Dinero disponible total: cuentas (incluyendo saldos negativos) + metas
     const available = bankBalance + savedInGoals;
 
-    // Deuda en tarjetas
-    const debt = currAccounts
+    // Deuda total: tarjetas de crédito + cuentas con saldo negativo
+    const creditDebt = currAccounts
       .filter((a) => a.type === "credit")
       .reduce((sum, a) => sum + Math.abs(a.balance), 0);
 
-    // Patrimonio neto: cuentas + metas ahorradas - deuda tarjetas
-    const accountsNet = currAccounts.reduce((sum, a) => sum + a.balance, 0);
+    const negativeAccountsDebt = currAccounts
+      .filter((a) => a.type !== "credit" && a.balance < 0)
+      .reduce((sum, a) => sum + Math.abs(a.balance), 0);
+
+    const debt = creditDebt + negativeAccountsDebt;
+
+    // Patrimonio neto: cuentas (restando saldos negativos y deuda de tarjetas) + metas ahorradas
+    const accountsNet = currAccounts.reduce(
+      (sum, a) =>
+        sum + (a.type === "credit" ? -Math.abs(a.balance) : a.balance),
+      0,
+    );
     const net = accountsNet + savedInGoals;
 
     return {

@@ -10,5 +10,5 @@ jobs:
     name: EAS Update (Production)
     type: update
     params:
-      branch: production
+      channel: production
 

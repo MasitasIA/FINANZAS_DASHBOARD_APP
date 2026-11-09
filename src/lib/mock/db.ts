@@ -3,7 +3,13 @@
  * Simula la estructura de Cloudflare D1.
  */
 
-import type { Account, Category, SavingsGoal, Transaction } from "@/types";
+import type {
+  Account,
+  Category,
+  RecurringExpense,
+  SavingsGoal,
+  Transaction,
+} from "@/types";
 import { colors } from "../../../tailwind.config";
 
 // ─── Cuentas ──────────────────────────────────────────────────────────────────
@@ -220,6 +226,74 @@ export const mockGoals: SavingsGoal[] = [
     status:        "completed",
     createdAt:     "2024-04-01T00:00:00Z",
     updatedAt:     "2024-09-01T00:00:00Z",
+  },
+];
+
+// ─── Gastos Automáticos / Recurrentes ─────────────────────────────────────────
+
+export const mockRecurringExpenses: RecurringExpense[] = [
+  {
+    id:           "rec-1",
+    type:         "expense",
+    name:         "Alquiler departamento",
+    amount:       280_000,
+    currency:     "ARS",
+    accountId:    "acc-1",
+    accountName:  "Cuenta corriente",
+    accountColor: colors.primary[500],
+    categoryId:   "cat-housing",
+    dueDate:      "2026-11-10",
+    dueDay:       10,
+    frequency:    "monthly",
+    isVariable:   false,
+    icon:         "home",
+    color:        colors.primary[500],
+    isActive:     true,
+    lastPaidDate: "2026-10-10",
+    createdAt:    "2024-01-01T00:00:00Z",
+    updatedAt:    "2026-10-10T00:00:00Z",
+  },
+  {
+    id:           "rec-2",
+    type:         "expense",
+    name:         "Internet Fibra 300MB",
+    amount:       24_500,
+    currency:     "ARS",
+    accountId:    "acc-3",
+    accountName:  "Billetera Mercado Pago",
+    accountColor: colors.warning[500],
+    categoryId:   "cat-services",
+    dueDate:      "2026-11-15",
+    dueDay:       15,
+    frequency:    "monthly",
+    isVariable:   true,
+    icon:         "wifi",
+    color:        colors.accent.cyan,
+    isActive:     true,
+    lastPaidDate: null,
+    createdAt:    "2024-02-01T00:00:00Z",
+    updatedAt:    "2024-02-01T00:00:00Z",
+  },
+  {
+    id:           "rec-3",
+    type:         "income",
+    name:         "Sueldo mensual",
+    amount:       900_000,
+    currency:     "ARS",
+    accountId:    "acc-1",
+    accountName:  "Cuenta corriente",
+    accountColor: colors.primary[500],
+    categoryId:   "cat-salary",
+    dueDate:      "2026-11-01",
+    dueDay:       1,
+    frequency:    "monthly",
+    isVariable:   false,
+    icon:         "briefcase",
+    color:        colors.success[500],
+    isActive:     true,
+    lastPaidDate: "2026-10-01",
+    createdAt:    "2024-01-01T00:00:00Z",
+    updatedAt:    "2026-10-01T00:00:00Z",
   },
 ];
 

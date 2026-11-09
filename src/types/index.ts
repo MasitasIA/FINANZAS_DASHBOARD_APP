@@ -142,6 +142,51 @@ export interface SystemStats {
   dbQuotaBytes: number;
 }
 
+// ─── Gastos Automáticos / Recurrentes ────────────────────────────────────────
+
+export type RecurringFrequency = "monthly" | "yearly" | "weekly";
+export type RecurringItemType = "expense" | "income";
+
+export interface RecurringExpense {
+  id: string;
+  type: RecurringItemType; // 'expense' (gasto automático) | 'income' (ingreso automático)
+  name: string; // Nombre (ej. "Netflix", "Alquiler", "Sueldo", "Honorarios")
+  amount: number; // Monto fijado base
+  currency: Currency;
+  accountId: string; // Cuenta donde se descuenta o acredita
+  accountName?: string;
+  accountColor?: string;
+  categoryId: string;
+  dueDate: string; // Fecha de cobro / pago (YYYY-MM-DD)
+  dueDay: number; // Día del mes (1-31)
+  frequency: RecurringFrequency;
+  isVariable: boolean; // false = monto fijo (descuenta/acredita solo), true = monto variable (pregunta a la hora del usuario)
+  icon: string;
+  color: string;
+  isActive: boolean;
+  lastPaidDate?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecurringApplyPayload {
+  amount?: number; // Monto real del mes (si varió respecto al monto fijado)
+  updateBaseAmount?: boolean; // Si true, actualiza también el monto fijado para futuros meses
+  note?: string;
+}
+
+export interface UserSettings {
+  userId: string;
+  reminderTime: string; // Hora preferida del usuario "HH:mm" (ej: "09:00")
+  updatedAt: string;
+}
+
+export interface RecurringProcessResult {
+  appliedFixed: RecurringExpense[];
+  dueVariable: RecurringExpense[];
+  settings: UserSettings;
+}
+
 // ─── API Response ─────────────────────────────────────────────────────────────
 
 export interface ApiResponse<T> {
