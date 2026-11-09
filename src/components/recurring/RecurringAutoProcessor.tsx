@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
   Modal,
@@ -7,13 +7,25 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { router } from "expo-router";
+import {
+  addNotificationResponseReceivedListener,
+  type EventSubscription,
+} from "expo-notifications";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Button, Typography } from "@/components/ui";
+import { useAccounts } from "@/hooks/useAccounts";
 import {
   usePayRecurringExpense,
   useProcessDueRecurring,
+  useRecurringExpenses,
   useSkipRecurringExpense,
+  useUserSettings,
 } from "@/hooks/useRecurringExpenses";
+import {
+  sendAutoAppliedNotification,
+  syncRecurringNotifications,
+} from "@/lib/notifications";
 import type { RecurringExpense } from "@/types";
 import { formatCurrency } from "@/utils/formatters";
 import { colors } from "../../../tailwind.config";
@@ -32,9 +44,23 @@ function getLocalDateAndTime(): { localDate: string; localTime: string } {
 }
 
 export function RecurringAutoProcessor({ enabled }: { enabled: boolean }) {
+  const { data: recurringData } = useRecurringExpenses();
+  const { data: accountsData } = useAccounts();
+  const { data: userSettings } = useUserSettings();
+
   const processDueMutation = useProcessDueRecurring();
   const payMutation = usePayRecurringExpense();
   const skipMutation = useSkipRecurringExpense();
+
+  const items = useMemo(
+    () => recurringData?.data ?? [],
+    [recurringData?.data],
+  );
+  const accounts = useMemo(
+    () => accountsData?.data ?? [],
+    [accountsData?.data],
+  );
+  const reminderTime = userSettings?.reminderTime ?? "09:00";
 
   const [appliedFixedBanner, setAppliedFixedBanner] = useState<
     RecurringExpense[]
@@ -50,6 +76,49 @@ export function RecurringAutoProcessor({ enabled }: { enabled: boolean }) {
   const [priceChanged, setPriceChanged] = useState(false);
   const [realAmountInput, setRealAmountInput] = useState("");
   const [updateBaseAmount, setUpdateBaseAmount] = useState(true);
+
+  // Sincronizar notificaciones móviles programadas cada vez que cambian los movimientos o la hora
+  useEffect(() => {
+    if (!enabled || Platform.OS === "web") return;
+    syncRecurringNotifications(items, accounts, reminderTime);
+  }, [enabled, items, accounts, reminderTime]);
+
+  // Escuchar toques en notificaciones del sistema (barra de estado del celular)
+  useEffect(() => {
+    if (!enabled || Platform.OS === "web") return;
+
+    let sub: EventSubscription | null = null;
+    try {
+      sub = addNotificationResponseReceivedListener(
+        (response) => {
+          const data = response.notification.request.content.data as
+            | { recurringId?: string; action?: string }
+            | undefined;
+
+          if (data?.action === "prompt_variable" && data?.recurringId) {
+            const target = items.find((i) => i.id === data.recurringId);
+            if (target) {
+              setPriceChanged(false);
+              setRealAmountInput(String(target.amount));
+              setUpdateBaseAmount(true);
+              setVariableQueue((prev) => [
+                target,
+                ...prev.filter((p) => p.id !== target.id),
+              ]);
+              return;
+            }
+          }
+          router.push("/recurring" as any);
+        },
+      );
+    } catch {
+      // Ignorar si no está disponible en web
+    }
+
+    return () => {
+      sub?.remove();
+    };
+  }, [enabled, items]);
 
   function advanceQueue(completedId: string) {
     const { localDate } = getLocalDateAndTime();
@@ -82,6 +151,7 @@ export function RecurringAutoProcessor({ enabled }: { enabled: boolean }) {
             }
             if (appliedFixed && appliedFixed.length > 0) {
               setAppliedFixedBanner((prev) => [...prev, ...appliedFixed]);
+              sendAutoAppliedNotification(appliedFixed);
             }
             if (dueVariable && dueVariable.length > 0) {
               const filtered = dueVariable.filter((item) => {

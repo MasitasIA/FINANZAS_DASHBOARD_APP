@@ -14,6 +14,7 @@ import { router } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Button, Card, Typography } from "@/components/ui";
 import { useAccounts } from "@/hooks/useAccounts";
+import { useCategories } from "@/hooks/useCategories";
 import {
   useCreateRecurringExpense,
   useDeleteRecurringExpense,
@@ -23,6 +24,7 @@ import {
   useUpdateUserSettings,
   useUserSettings,
 } from "@/hooks/useRecurringExpenses";
+import { sendTestNotification } from "@/lib/notifications";
 import type {
   Currency,
   RecurringExpense,
@@ -60,6 +62,7 @@ const REMINDER_TIME_PRESETS = ["09:00", "13:00", "18:00", "21:00"];
 export default function RecurringExpensesScreen() {
   const { data: recurringData, isLoading } = useRecurringExpenses();
   const { data: accountsData } = useAccounts();
+  const { data: categoriesData } = useCategories();
   const { data: userSettings } = useUserSettings();
 
   const createMutation = useCreateRecurringExpense();
@@ -70,6 +73,7 @@ export default function RecurringExpensesScreen() {
 
   const items = recurringData?.data ?? [];
   const accounts = accountsData?.data ?? [];
+  const allCategories = categoriesData?.data ?? [];
   const reminderTime = userSettings?.reminderTime ?? "09:00";
 
   // Pestaña activa: Gastos automáticos vs Ingresos automáticos
@@ -79,12 +83,17 @@ export default function RecurringExpensesScreen() {
   const [showTimeModal, setShowTimeModal] = useState(false);
   const [customTimeInput, setCustomTimeInput] = useState(reminderTime);
   const [timeError, setTimeError] = useState<string | null>(null);
+  const [testNotifFeedback, setTestNotifFeedback] = useState<string | null>(
+    null,
+  );
 
   // Estado del modal de creación / edición
   const [modalVisible, setModalVisible] = useState(false);
   const [editingItem, setEditingItem] = useState<RecurringExpense | null>(null);
 
   const [itemType, setItemType] = useState<RecurringItemType>("expense");
+  const [selectedCategoryId, setSelectedCategoryId] =
+    useState<string>("cat-services");
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
   const [dueDate, setDueDate] = useState(
@@ -110,7 +119,26 @@ export default function RecurringExpensesScreen() {
   function openTimeSettingsModal() {
     setCustomTimeInput(reminderTime);
     setTimeError(null);
+    setTestNotifFeedback(null);
     setShowTimeModal(true);
+  }
+
+  async function handleTestNotification() {
+    setTestNotifFeedback(null);
+    const ok = await sendTestNotification(
+      customTimeInput.trim() || reminderTime,
+    );
+    if (ok) {
+      setTestNotifFeedback(
+        "¡Notificación enviada!La verás en tu celular en 2 segundos.",
+      );
+    } else {
+      setTestNotifFeedback(
+        Platform.OS === "web"
+          ? "Las notificaciones móviles funcionan en la app instalada en Android/iOS."
+          : "Activa el permiso de notificaciones en los ajustes de tu celular.",
+      );
+    }
   }
 
   function handleSaveReminderTime() {
@@ -124,18 +152,47 @@ export default function RecurringExpensesScreen() {
     });
   }
 
+  function handleSelectTypeInModal(newType: RecurringItemType) {
+    setItemType(newType);
+    const defaultCatId = newType === "income" ? "cat-salary" : "cat-services";
+    const matchingCat =
+      allCategories.find((c) => c.id === defaultCatId) ??
+      allCategories.find((c) => c.type === newType);
+    setSelectedCategoryId(matchingCat?.id ?? defaultCatId);
+    if (!editingItem) {
+      setIcon(
+        (matchingCat?.icon as keyof typeof MaterialCommunityIcons.glyphMap) ||
+          (newType === "income" ? "briefcase" : "calendar-sync"),
+      );
+      setColor(
+        matchingCat?.color ||
+          (newType === "income" ? colors.success[500] : accountColors[0]),
+      );
+    }
+  }
+
   function openCreateModal() {
     setEditingItem(null);
     setItemType(activeTab);
+    const defaultCatId =
+      activeTab === "income" ? "cat-salary" : "cat-services";
+    const matchingCat =
+      allCategories.find((c) => c.id === defaultCatId) ??
+      allCategories.find((c) => c.type === activeTab);
+    setSelectedCategoryId(matchingCat?.id ?? defaultCatId);
     setName("");
     setAmount("");
     setDueDate(new Date().toISOString().slice(0, 10));
     setSelectedAccountId(accounts[0]?.id ?? "");
     setFrequency("monthly");
     setIsVariable(false);
-    setIcon(activeTab === "income" ? "briefcase" : "calendar-sync");
+    setIcon(
+      (matchingCat?.icon as keyof typeof MaterialCommunityIcons.glyphMap) ||
+        (activeTab === "income" ? "briefcase" : "calendar-sync"),
+    );
     setColor(
-      activeTab === "income" ? colors.success[500] : accountColors[0],
+      matchingCat?.color ||
+        (activeTab === "income" ? colors.success[500] : accountColors[0]),
     );
     setIsActive(true);
     setFormError(null);
@@ -144,7 +201,11 @@ export default function RecurringExpensesScreen() {
 
   function openEditModal(item: RecurringExpense) {
     setEditingItem(item);
-    setItemType(item.type || "expense");
+    const t = item.type || "expense";
+    setItemType(t);
+    setSelectedCategoryId(
+      item.categoryId || (t === "income" ? "cat-salary" : "cat-services"),
+    );
     setName(item.name);
     setAmount(String(item.amount));
     setDueDate(item.dueDate || new Date().toISOString().slice(0, 10));
@@ -252,6 +313,9 @@ export default function RecurringExpensesScreen() {
     }
 
     const currency: Currency = targetAccount.currency || "ARS";
+    const finalCategoryId =
+      selectedCategoryId ||
+      (itemType === "income" ? "cat-salary" : "cat-services");
 
     if (editingItem) {
       updateMutation.mutate(
@@ -259,6 +323,7 @@ export default function RecurringExpensesScreen() {
           id: editingItem.id,
           payload: {
             type: itemType,
+            categoryId: finalCategoryId,
             name: cleanName,
             amount: parsedAmount,
             currency,
@@ -284,7 +349,7 @@ export default function RecurringExpensesScreen() {
           amount: parsedAmount,
           currency,
           accountId: targetAccount.id,
-          categoryId: itemType === "income" ? "cat-salary" : "cat-services",
+          categoryId: finalCategoryId,
           dueDate: parsedDate.date,
           dueDay: parsedDate.day,
           frequency,
@@ -556,6 +621,9 @@ export default function RecurringExpensesScreen() {
                   : item.frequency === "weekly"
                     ? "Semanal"
                     : "Mensual";
+              const itemCategory = allCategories.find(
+                (c) => c.id === item.categoryId,
+              );
 
               return (
                 <Pressable
@@ -627,8 +695,30 @@ export default function RecurringExpensesScreen() {
                       </View>
                     </View>
 
-                    {/* Fila 2: Chips de Fecha, Frecuencia y Modo (Fijo vs Variable) */}
+                    {/* Fila 2: Chips de Categoría, Fecha, Frecuencia y Modo (Fijo vs Variable) */}
                     <View className="flex-row flex-wrap items-center gap-1.5">
+                      {itemCategory && (
+                        <View
+                          className="px-2.5 py-1 rounded-xl flex-row items-center gap-1"
+                          style={{ backgroundColor: `${itemCategory.color}20` }}
+                        >
+                          <MaterialCommunityIcons
+                            name={
+                              (itemCategory.icon as keyof typeof MaterialCommunityIcons.glyphMap) ||
+                              "tag"
+                            }
+                            size={12}
+                            color={itemCategory.color}
+                          />
+                          <Typography
+                            className="text-[11px] font-bold"
+                            style={{ color: itemCategory.color }}
+                          >
+                            {itemCategory.name}
+                          </Typography>
+                        </View>
+                      )}
+
                       <View className="px-2.5 py-1 rounded-xl bg-surface-700/80 flex-row items-center gap-1.5">
                         <MaterialCommunityIcons
                           name="calendar-clock"
@@ -829,6 +919,26 @@ export default function RecurringExpensesScreen() {
               </Typography>
             )}
 
+            {testNotifFeedback && (
+              <Typography className="text-xs font-semibold text-success-500 text-center">
+                {testNotifFeedback}
+              </Typography>
+            )}
+
+            <Pressable
+              onPress={handleTestNotification}
+              className="py-2.5 px-3 rounded-2xl bg-surface-700 border border-surface-600 flex-row items-center justify-center gap-2 active:opacity-80"
+            >
+              <MaterialCommunityIcons
+                name="bell-ring-outline"
+                size={16}
+                color={colors.primary[600]}
+              />
+              <Typography className="text-xs font-bold text-primary-600">
+                Probar notificación en mi celular
+              </Typography>
+            </Pressable>
+
             <Button
               title="Guardar mi hora de consulta"
               onPress={handleSaveReminderTime}
@@ -1001,7 +1111,7 @@ export default function RecurringExpensesScreen() {
               {/* Selector de Tipo: Gasto vs Ingreso */}
               <View className="flex-row gap-2">
                 <Pressable
-                  onPress={() => setItemType("expense")}
+                  onPress={() => handleSelectTypeInModal("expense")}
                   className={`flex-1 py-2.5 rounded-2xl border items-center flex-row justify-center gap-1.5 ${
                     itemType === "expense"
                       ? "bg-danger-500/15 border-danger-500"
@@ -1029,7 +1139,7 @@ export default function RecurringExpensesScreen() {
                 </Pressable>
 
                 <Pressable
-                  onPress={() => setItemType("income")}
+                  onPress={() => handleSelectTypeInModal("income")}
                   className={`flex-1 py-2.5 rounded-2xl border items-center flex-row justify-center gap-1.5 ${
                     itemType === "income"
                       ? "bg-success-500/15 border-success-500"
@@ -1055,6 +1165,77 @@ export default function RecurringExpensesScreen() {
                     Ingreso automático
                   </Typography>
                 </Pressable>
+              </View>
+
+              {/* Selector de Categoría / Tipo de Ingreso o Gasto */}
+              <View className="gap-1.5">
+                <View className="flex-row items-center justify-between">
+                  <Typography variant="label">
+                    {itemType === "income"
+                      ? "Tipo de ingreso (Categoría)"
+                      : "Categoría del gasto"}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    className="font-semibold text-primary-600"
+                  >
+                    {allCategories.find((c) => c.id === selectedCategoryId)
+                      ?.name ?? ""}
+                  </Typography>
+                </View>
+
+                <View className="flex-row flex-wrap gap-2">
+                  {allCategories
+                    .filter((c) => c.type === itemType)
+                    .map((cat) => {
+                      const isSelected = selectedCategoryId === cat.id;
+                      return (
+                        <Pressable
+                          key={cat.id}
+                          onPress={() => {
+                            setSelectedCategoryId(cat.id);
+                            setIcon(
+                              (cat.icon as keyof typeof MaterialCommunityIcons.glyphMap) ||
+                                "tag",
+                            );
+                            setColor(cat.color || accountColors[0]);
+                          }}
+                          className={`flex-row items-center px-3 py-2 rounded-2xl gap-2 border ${
+                            isSelected
+                              ? "bg-primary-600/15 border-primary-600"
+                              : "bg-surface-700 border-surface-600/60"
+                          }`}
+                        >
+                          <View
+                            className="w-6 h-6 rounded-lg items-center justify-center"
+                            style={{
+                              backgroundColor: isSelected
+                                ? cat.color
+                                : `${cat.color}25`,
+                            }}
+                          >
+                            <MaterialCommunityIcons
+                              name={
+                                (cat.icon as keyof typeof MaterialCommunityIcons.glyphMap) ||
+                                "tag"
+                              }
+                              size={14}
+                              color={isSelected ? colors.white : cat.color}
+                            />
+                          </View>
+                          <Typography
+                            className={`text-xs ${
+                              isSelected
+                                ? "font-bold text-primary-600"
+                                : "font-medium text-text-primary"
+                            }`}
+                          >
+                            {cat.name}
+                          </Typography>
+                        </Pressable>
+                      );
+                    })}
+                </View>
               </View>
 
               {/* Selector de Comportamiento: Fijo (Automático) vs Variable (Pregunta a la hora) */}

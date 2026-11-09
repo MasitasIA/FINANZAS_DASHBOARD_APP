@@ -2,7 +2,7 @@
   "expo": {
     "name": "UNPO: Finanzas",
     "slug": "finanzas_dashboard",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -43,7 +43,14 @@
           "enforceContrast": false
         }
       ],
-      "expo-splash-screen"
+      "expo-splash-screen",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#c8102e"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

@@ -1,6 +1,6 @@
-# 💰 Finanzas Dashboard
+# 💰 UNPO: Finanzas (Finanzas Dashboard)
 
-Aplicación móvil moderna de finanzas personales desarrollada con **React Native (Expo SDK 58)**, **NativeWind (Tailwind CSS)** y backend serverless en **Cloudflare Workers** con base de datos SQLite distribuida en **Cloudflare D1**.
+Aplicación móvil multi-usuario de finanzas personales desarrollada con **React Native (Expo SDK 58)**, **NativeWind v4 (Tailwind CSS)**, autenticación con **Firebase Auth** y backend serverless en **Cloudflare Workers** con base de datos SQLite distribuida en **Cloudflare D1**.
 
 ---
 
@@ -12,15 +12,31 @@ Aplicación móvil moderna de finanzas personales desarrollada con **React Nativ
 
 ## ✨ Características Principales
 
-- **Dashboard Resumen**: Visualiza tu patrimonio neto total, dinero disponible (incorporando ahorros en metas), saldo bancario y compromisos de tarjetas de crédito.
-- **Gestión de Cuentas y Tarjetas**: Soporte para cuentas bancarias, billeteras virtuales, efectivo y tarjetas de crédito (con límites, fecha de cierre y vencimiento).
-- **Metas de Ahorro**: Define objetivos con monto meta y fecha límite. Cada ahorro suma automáticamente a tu disponible y patrimonio.
-- **Transacciones Flexibles**: Registro de ingresos, gastos clasificados por rubro y transferencias directas entre cuentas.
-- **Reportes Interactivos**:
-  - Análisis mensual detallado.
-  - **Consolidado Anual** con evolución mes a mes.
-  - Gráficos interactivos de Torta / Dona (SVG nativo) con selección de rubros.
-- **Modo Offline / Mock integrado**: Puedes ejecutar y probar toda la aplicación de inmediato sin necesidad de desplegar ningún backend.
+- **Dashboard Resumen**:
+  - Visualiza tu **Patrimonio Neto Total** y **Dinero Disponible** (incorporando ahorros en metas y descontando automáticamente saldos negativos en cuentas o deudas de tarjetas de crédito).
+  - Vista rápida de **Cuentas**, **Metas activas**, **Gastos e Ingresos Automáticos** y un panel de **Información del Sistema** (versión instalada, usuarios activos, almacenamiento usado en Cloudflare D1 sobre la cuota de 5 GB y búsqueda manual de actualizaciones OTA).
+- **Gastos e Ingresos Automáticos (`/recurring`)**:
+  - **2 pestañas unificadas**: *Gastos automáticos* (suscripciones, alquiler, servicios) e *Ingresos automáticos* (sueldo/trabajo, pensión, beca, aporte, alquiler cobrado, etc.) con selección de categoría, fecha, frecuencia (*Mensual*, *Anual*, *Semanal*) y cuenta asociada.
+  - **Balance fijo mensual estimado**: cálculo en tiempo real del flujo neto entre ingresos fijos y gastos fijos activos.
+  - **Modo Fijo vs. Modo Variable (`is_variable`)**:
+    - **⚡ Monto Fijo (Automático)**: se descuenta o acredita automáticamente al llegar el día indicado y avanza la fecha al próximo ciclo.
+    - **🔔 Monto Variable (Consultar)**: espera al día indicado y a la **hora personal configurada por cada usuario** (`user_settings.reminder_time`) para preguntar si el precio/ingreso cambió este mes o se mantiene igual, permitiendo actualizar opcionalmente el monto base para futuros meses.
+- **Sistema de Notificaciones Móviles (`expo-notifications`)**:
+  - **Aviso anticipado (1 día antes)**: notifica en el celular cuando mañana vas a cobrar un ingreso (`💰 Mañana cobras...`) o vence un gasto (`📅 Mañana vence...`).
+  - **Aviso el día de vencimiento**: a la hora elegida por el usuario, envía una notificación interactiva (`🔔 ¿Cambió el precio de...?` para variables o `⚡ Hoy se acredita/descuenta...` para fijos) que al tocarse abre directamente el cuadro de confirmación en la app.
+  - **Confirmación de ejecución automática**: notifica inmediatamente cuando un movimiento fijo fue acreditado o descontado.
+- **Reportes Interactivos y Proyección Financiera (`/(tabs)/reports`)**:
+  - **Mensual**: desglose de ingresos y gastos con gráficos interactivos de Torta / Dona (SVG nativo).
+  - **Anual**: consolidado anual y evolución mes a mes.
+  - **🔮 Proyección a Futuro**: curva interactiva a 12 meses, simulador con **3 escenarios** (*Ritmo actual*, *Ahorrador -15% gastos*, *Prudente +15% gastos*), hitos de patrimonio estimado a **+3 meses, +6 meses, +1 año y +2 años**, y fecha estimada (ETA) para alcanzar cada meta de ahorro activa.
+- **Seguridad Multicapa**:
+  - **Autenticación Firebase (JWT RS256)**: verificación criptográfica de tokens en el Worker contra las claves públicas de Google.
+  - **Row-Level Security (RLS)**: aislamiento estricto por `user_id` tanto en consultas del Worker como en los `TRIGGER` de SQLite D1 y validación de propiedad cruzada (`verifyAccountOwnership` / `verifyGoalOwnership`).
+  - **Anti-XSS y Sanitización**: limpieza estricta de textos, identificadores, colores, íconos, montos y límite de payload JSON (16 KB), junto con cabeceras HTTP de seguridad (`CSP`, `HSTS`, `X-Content-Type-Options`, `X-Frame-Options`).
+  - **Rate Limiting en 2 niveles**: límite por IP pre-autenticación (anti-DDoS) y límite por `userId` autenticado diferenciando lecturas y escrituras.
+- **Actualizaciones OTA Automáticas (`expo-updates` + EAS Workflows)**:
+  - Descarga actualizaciones en segundo plano desde el canal `production` y muestra un banner superior (`"Nueva versión descargada y lista — Actualizar ahora"`) sin requerir reinstalar el APK para cambios de JS/UI.
+- **Modo Offline / Mock integrado**: puedes ejecutar y probar toda la aplicación de inmediato sin necesidad de desplegar ningún backend (`EXPO_PUBLIC_USE_MOCK=true`).
 
 ---
 
@@ -31,6 +47,9 @@ Aplicación móvil moderna de finanzas personales desarrollada con **React Nativ
 | **Framework Móvil**         | [Expo SDK 58](https://expo.dev/) + [React Native 0.88](https://reactnative.dev/)                                        |
 | **Enrutamiento**            | [Expo Router v4](https://docs.expo.dev/router/introduction/)                                                            |
 | **Estilos**                 | [NativeWind v4](https://www.nativewind.dev/) (Tailwind CSS)                                                             |
+| **Autenticación**           | [Firebase Authentication](https://firebase.google.com/docs/auth) (Email/Password + Google)                              |
+| **Notificaciones**          | [Expo Notifications](https://docs.expo.dev/versions/v58.0.0/sdk/notifications/) (Canales Android + Triggers locales)    |
+| **Actualizaciones OTA**     | [Expo Updates](https://docs.expo.dev/eas-update/introduction/) + EAS Workflows                                          |
 | **Estado del Servidor**     | [TanStack Query v5](https://tanstack.com/query/latest)                                                                  |
 | **Estado del Cliente**      | [Zustand v5](https://github.com/pmndrs/zustand)                                                                         |
 | **Backend & Base de Datos** | [Cloudflare Workers](https://workers.cloudflare.com/) + [Cloudflare D1](https://developers.cloudflare.com/d1/) (SQLite) |
@@ -49,7 +68,7 @@ npm install
 
 ### 2. Configurar variables de entorno
 
-Copia el archivo de ejemplo:
+Copia el archivo de ejemplo y completa las variables de Firebase y la URL de tu Worker:
 
 ```bash
 cp .env.example .env
@@ -58,8 +77,6 @@ cp .env.example .env
 ---
 
 ## 🧪 Opción A: Probar en Modo Mock (Sin Backend)
-
-No necesitas crear cuentas ni configurar servidores para probar la app. El modo Mock utiliza datos simulados en memoria:
 
 En tu archivo `.env`, asegúrate de tener:
 
@@ -73,15 +90,13 @@ Inicia la aplicación:
 # Versión Web
 npm run web
 
-# O para Android / iOS con Expo Go:
-npx expo start
+# O para Android / iOS:
+npx expo start --clear
 ```
 
 ---
 
-## ☁️ Opción B: Habilitar tu propia Base de Datos (Cloudflare D1 + Worker)
-
-Si quieres persistir tus datos reales en la nube de forma 100% gratuita con Cloudflare D1:
+## ☁️ Opción B: Conectar con Cloudflare D1 + Worker
 
 ### 1. Iniciar sesión en Cloudflare Wrangler
 
@@ -89,65 +104,42 @@ Si quieres persistir tus datos reales en la nube de forma 100% gratuita con Clou
 npx wrangler login
 ```
 
-### 2. Crear tu base de datos D1
-
-```bash
-npx wrangler d1 create finanzas-db
-```
-
-Copia el `database_id` que te devuelve la terminal y pégalo en [`worker/wrangler.toml`](worker/wrangler.toml):
-
-```toml
-[[d1_databases]]
-binding = "DB"
-database_name = "finanzas-db"
-database_id = "TU_DATABASE_ID_AQUI"
-```
-
-### 3. Crear las tablas (Migración inicial)
-
-Ejecuta el script SQL para crear la estructura completa de tablas y categorías por defecto:
+### 2. Crear o inicializar la base de datos D1
 
 ```bash
 npm run d1:init
 ```
 
-### 4. Configurar el Token de Seguridad (Recomendado)
-
-Genera un token alfanumérico seguro (sin signos `$` ni caracteres especiales) y establécelo como secreto en tu Worker:
-
-```bash
-cd worker
-npx wrangler secret put API_TOKEN
-# Escribe o pega tu token y presiona Enter
-cd ..
-```
-
-### 5. Desplegar el Worker
+### 3. Desplegar el Worker
 
 ```bash
 npm run worker:deploy
 ```
 
-Al finalizar el despliegue, la terminal te indicará la URL pública de tu Worker (por ejemplo: `https://finanzas-worker.tu-subdominio.workers.dev`).
-
-### 6. Conectar la App Móvil con tu Base de Datos
-
-Actualiza tu archivo `.env`:
+### 4. Configurar `.env` para usar el Backend Real
 
 ```env
 EXPO_PUBLIC_USE_MOCK=false
-EXPO_PUBLIC_API_URL=https://tu-worker.tu-subdominio.workers.dev
-EXPO_PUBLIC_API_TOKEN=tu_token_configurado_en_el_paso_4
+EXPO_PUBLIC_API_URL=https://finanzas-worker.tu-subdominio.workers.dev
 ```
 
-Reinicia el servidor de Expo limpiando la caché:
+---
 
-```bash
-npx expo start --clear
-```
+## 📦 Compilación APK y Actualizaciones OTA
 
-¡Listo! Tu app estará conectada directamente a tu base de datos SQLite en Cloudflare D1.
+- **Actualización OTA (solo cambios en JS, pantallas, estilos o lógica)**:
+  - Al hacer `git push` a la rama `main`, el workflow `.eas/workflows/update.yml` publica automáticamente la actualización en el canal `production`.
+  - También puedes publicarla manualmente:
+
+    ```bash
+    npx eas-cli update --channel production --message "Descripción del cambio"
+    ```
+
+- **Nueva compilación nativa APK (cuando se agregan librerías nativas nuevas en `package.json` o `app.json`)**:
+
+  ```bash
+  npx eas-cli build -p android --profile production
+  ```
 
 ---
 
@@ -157,8 +149,10 @@ npx expo start --clear
 npm run web            # Inicia la aplicación en el navegador web
 npm run android        # Inicia la aplicación en Android
 npm run lint           # Ejecuta el linter (expo lint)
+npm run worker:dev     # Ejecuta el Cloudflare Worker en modo local
 npm run worker:deploy  # Despliega el backend a Cloudflare Workers
 npm run d1:init        # Ejecuta schema.sql en la base de datos remota D1
+npm run d1:init:local  # Ejecuta schema.sql en la base de datos local D1
 ```
 
 ---
