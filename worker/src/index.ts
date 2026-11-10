@@ -401,6 +401,16 @@ async function ensureSharedSchema(db: D1DatabaseType): Promise<void> {
       // Columna ya existe
     }
 
+    try {
+      await db
+        .prepare(
+          "ALTER TABLE user_settings ADD COLUMN theme TEXT NOT NULL DEFAULT 'light'",
+        )
+        .run();
+    } catch {
+      // Columna ya existe
+    }
+
     await db.batch([
       db.prepare("DROP TRIGGER IF EXISTS update_balance_after_insert"),
       db.prepare(
@@ -817,6 +827,12 @@ function sanitizeTime(value: unknown, fallback = "09:00"): string {
   const trimmed = value.trim();
   if (/^([01]\d|2[0-3]):([0-5]\d)$/.test(trimmed)) return trimmed;
   return fallback;
+}
+
+/** Devuelve "light" | "dark" o null si el valor no es válido. */
+function sanitizeTheme(value: unknown): "light" | "dark" | null {
+  if (value === "light" || value === "dark") return value;
+  return null;
 }
 
 function computeNextDueDate(
@@ -2380,7 +2396,7 @@ export default {
         });
       }
 
-      // ─── USER SETTINGS (Hora de consulta por Usuario) ──────────────────────
+      // ─── USER SETTINGS (Hora de aviso + Tema claro/oscuro por Usuario) ─────
       if (path === "/user-settings" && method === "GET") {
         const row = await env.DB.prepare(
           "SELECT * FROM user_settings WHERE user_id = ?",
@@ -2391,6 +2407,7 @@ export default {
         return success({
           userId,
           reminderTime: row ? String(row.reminder_time || "09:00") : "09:00",
+          theme: sanitizeTheme(row?.theme) ?? "light",
           updatedAt: row
             ? String(row.updated_at)
             : new Date().toISOString(),
@@ -2403,22 +2420,42 @@ export default {
       ) {
         const parsed = await parseSafeJsonBody(request);
         if (!parsed.ok) return parsed.response;
-        const reminderTime = sanitizeTime(parsed.data?.reminderTime, "");
-        if (!reminderTime) {
-          return error(
-            "Formato de hora inválido. Usa el formato 24h HH:mm (ej. 09:00 o 20:30)",
-            400,
-          );
+
+        const hasReminder = parsed.data?.reminderTime !== undefined;
+        const hasTheme = parsed.data?.theme !== undefined;
+        if (!hasReminder && !hasTheme) {
+          return error("Debes enviar reminderTime y/o theme", 400);
         }
 
+        let reminderTime: string | null = null;
+        if (hasReminder) {
+          reminderTime = sanitizeTime(parsed.data?.reminderTime, "");
+          if (!reminderTime) {
+            return error(
+              "Formato de hora inválido. Usa el formato 24h HH:mm (ej. 09:00 o 20:30)",
+              400,
+            );
+          }
+        }
+
+        let theme: "light" | "dark" | null = null;
+        if (hasTheme) {
+          theme = sanitizeTheme(parsed.data?.theme);
+          if (!theme) {
+            return error('Tema inválido. Usa "light" o "dark"', 400);
+          }
+        }
+
+        // Los campos no enviados (null) conservan su valor actual / por defecto
         await env.DB.prepare(
-          `INSERT INTO user_settings (user_id, reminder_time, updated_at)
-           VALUES (?, ?, datetime('now'))
+          `INSERT INTO user_settings (user_id, reminder_time, theme, updated_at)
+           VALUES (?, COALESCE(?, '09:00'), COALESCE(?, 'light'), datetime('now'))
            ON CONFLICT(user_id) DO UPDATE SET
-             reminder_time = excluded.reminder_time,
+             reminder_time = COALESCE(?, user_settings.reminder_time),
+             theme         = COALESCE(?, user_settings.theme),
              updated_at    = datetime('now')`,
         )
-          .bind(userId, reminderTime)
+          .bind(userId, reminderTime, theme, reminderTime, theme)
           .run();
 
         const updated = await env.DB.prepare(
@@ -2430,8 +2467,9 @@ export default {
         return success({
           userId,
           reminderTime: updated
-            ? String(updated.reminder_time || reminderTime)
-            : reminderTime,
+            ? String(updated.reminder_time || "09:00")
+            : (reminderTime ?? "09:00"),
+          theme: sanitizeTheme(updated?.theme) ?? theme ?? "light",
           updatedAt: updated
             ? String(updated.updated_at)
             : new Date().toISOString(),

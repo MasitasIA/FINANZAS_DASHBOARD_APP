@@ -23,6 +23,7 @@ import type {
   SystemStats,
   Transaction,
   UserSettings,
+  UserSettingsPatch,
 } from "@/types";
 import { colors } from "../../../tailwind.config";
 import {
@@ -922,11 +923,13 @@ export const mockRecurringExpenseHandlers = {
     return ok(mockUserSettings);
   },
 
-  async updateSettings(reminderTime: string): Promise<ApiResponse<UserSettings>> {
+  async updateSettings(
+    patch: UserSettingsPatch,
+  ): Promise<ApiResponse<UserSettings>> {
     await delay(80);
     mockUserSettings = {
       ...mockUserSettings,
-      reminderTime,
+      ...patch,
       updatedAt: new Date().toISOString(),
     };
     return ok(mockUserSettings);
@@ -968,6 +971,7 @@ export const mockRecurringExpenseHandlers = {
 let mockUserSettings: UserSettings = {
   userId: "mock-user",
   reminderTime: "09:00",
+  theme: "light",
   updatedAt: new Date().toISOString(),
 };
 

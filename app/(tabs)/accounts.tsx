@@ -9,9 +9,10 @@ import { JoinWithCodeModal } from "@/components/shared/ShareModals";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useGoals } from "@/hooks/useGoals";
 import { formatCurrency } from "@/utils/formatters";
-import { colors } from "../../tailwind.config";
+import { useAppTheme } from "@/theme/useAppTheme";
 
 export default function AccountsScreen() {
+  const { colors } = useAppTheme();
   const { data, isLoading, error, refetch } = useAccounts();
   const { data: goalsData } = useGoals();
   const [joinVisible, setJoinVisible] = useState(false);

@@ -209,11 +209,19 @@ export interface RecurringApplyPayload {
   note?: string;
 }
 
+export type ThemeMode = "light" | "dark";
+
 export interface UserSettings {
   userId: string;
   reminderTime: string; // Hora preferida del usuario "HH:mm" (ej: "09:00")
+  theme: ThemeMode; // Tema de la app elegido por el usuario (por defecto "light")
   updatedAt: string;
 }
+
+/** Campos editables de user_settings (se envía solo lo que cambia) */
+export type UserSettingsPatch = Partial<
+  Pick<UserSettings, "reminderTime" | "theme">
+>;
 
 export interface RecurringProcessResult {
   appliedFixed: RecurringExpense[];

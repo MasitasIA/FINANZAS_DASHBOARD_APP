@@ -32,7 +32,8 @@ import type {
   RecurringItemType,
 } from "@/types";
 import { formatCurrency } from "@/utils/formatters";
-import { accountColors, colors } from "../../tailwind.config";
+import { accountColors } from "../../tailwind.config";
+import { useAppTheme } from "@/theme/useAppTheme";
 
 const RECURRING_ICONS: (keyof typeof MaterialCommunityIcons.glyphMap)[] = [
   "calendar-sync",
@@ -60,6 +61,7 @@ const FREQUENCIES: { id: RecurringFrequency; label: string }[] = [
 const REMINDER_TIME_PRESETS = ["09:00", "13:00", "18:00", "21:00"];
 
 export default function RecurringExpensesScreen() {
+  const { colors } = useAppTheme();
   const { data: recurringData, isLoading } = useRecurringExpenses();
   const { data: accountsData } = useAccounts();
   const { data: categoriesData } = useCategories();

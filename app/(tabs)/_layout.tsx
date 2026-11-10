@@ -1,9 +1,10 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors } from "../../tailwind.config";
+import { useAppTheme } from "@/theme/useAppTheme";
 
 export default function TabLayout() {
+  const { colors } = useAppTheme();
   const insets = useSafeAreaInsets();
   const bottomPadding = insets.bottom > 0 ? insets.bottom : 8;
   const tabHeight = 58 + bottomPadding;
@@ -12,6 +13,7 @@ export default function TabLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
+        sceneStyle: { backgroundColor: colors.surface[900] },
         tabBarStyle: {
           backgroundColor: colors.surface[800],
           borderTopColor: colors.surface[600],

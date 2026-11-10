@@ -27,7 +27,7 @@ import {
 } from "@/store/reports.store";
 import type { CategorySummary } from "@/types";
 import { formatCurrency } from "@/utils/formatters";
-import { colors } from "../../tailwind.config";
+import { useAppTheme } from "@/theme/useAppTheme";
 
 const MONTHS = [
   "Enero",
@@ -45,6 +45,7 @@ const MONTHS = [
 ];
 
 export default function ReportsScreen() {
+  const { colors } = useAppTheme();
   const {
     reportView,
     categoryType,

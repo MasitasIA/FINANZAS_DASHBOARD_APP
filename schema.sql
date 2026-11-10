@@ -121,10 +121,13 @@ CREATE TABLE IF NOT EXISTS recurring_expenses (
 
 CREATE INDEX IF NOT EXISTS idx_recurring_expenses_user ON recurring_expenses(user_id, due_day ASC);
 
--- ── Configuración especial por usuario (Hora de aviso para montos variables) ──
+-- ── Configuración por usuario (hora de aviso para montos variables + tema) ────
+-- theme: 'light' (por defecto) | 'dark'
+-- Para bases existentes: ALTER TABLE user_settings ADD COLUMN theme TEXT NOT NULL DEFAULT 'light';
 CREATE TABLE IF NOT EXISTS user_settings (
   user_id       TEXT PRIMARY KEY,
   reminder_time TEXT NOT NULL DEFAULT '09:00',
+  theme         TEXT NOT NULL DEFAULT 'light' CHECK (theme IN ('light', 'dark')),
   updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

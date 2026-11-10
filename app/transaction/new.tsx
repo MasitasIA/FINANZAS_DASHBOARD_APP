@@ -17,9 +17,10 @@ import { useAccounts } from "@/hooks/useAccounts";
 import { useGoals } from "@/hooks/useGoals";
 import { useCategories } from "@/hooks/useCategories";
 import type { TransactionType, Currency } from "@/types";
-import { colors } from "../../tailwind.config";
+import { useAppTheme } from "@/theme/useAppTheme";
 
 export default function NewTransactionScreen() {
+  const { colors } = useAppTheme();
   const params = useLocalSearchParams<{
     type?: TransactionType;
     accountId?: string;

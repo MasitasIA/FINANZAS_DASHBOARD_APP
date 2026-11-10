@@ -2,7 +2,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { accountKeys } from "./useAccounts";
 import { transactionKeys } from "./useTransactions";
 import { recurringExpensesService } from "@/services/recurring.service";
-import type { RecurringApplyPayload, RecurringExpense } from "@/types";
+import type {
+  RecurringApplyPayload,
+  RecurringExpense,
+  UserSettingsPatch,
+} from "@/types";
 
 export const recurringExpenseKeys = {
   all: () => ["recurringExpenses"] as const,
@@ -18,13 +22,14 @@ export function useRecurringExpenses() {
   });
 }
 
-export function useUserSettings() {
+export function useUserSettings(enabled = true) {
   return useQuery({
     queryKey: recurringExpenseKeys.settings(),
     queryFn: async () => {
       const res = await recurringExpensesService.getSettings();
       return res.data;
     },
+    enabled,
     staleTime: 1000 * 60 * 5,
   });
 }
@@ -32,9 +37,13 @@ export function useUserSettings() {
 export function useUpdateUserSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (reminderTime: string) =>
-      recurringExpensesService.updateSettings(reminderTime),
-    onSuccess: () => {
+    // Acepta un patch (reminderTime y/o theme) o, por compatibilidad, la hora como string
+    mutationFn: (patch: UserSettingsPatch | string) =>
+      recurringExpensesService.updateSettings(
+        typeof patch === "string" ? { reminderTime: patch } : patch,
+      ),
+    onSuccess: (res) => {
+      qc.setQueryData(recurringExpenseKeys.settings(), res.data);
       qc.invalidateQueries({ queryKey: recurringExpenseKeys.settings() });
     },
   });

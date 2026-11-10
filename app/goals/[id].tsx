@@ -33,7 +33,8 @@ import {
   formatRelativeDate,
 } from "@/utils/formatters";
 import type { GoalStatus, SavingsGoal, Transaction } from "@/types";
-import { colors, accountColors } from "../../tailwind.config";
+import { accountColors } from "../../tailwind.config";
+import { useAppTheme } from "@/theme/useAppTheme";
 
 const GOAL_ICONS: (keyof typeof MaterialCommunityIcons.glyphMap)[] = [
   "piggy-bank",
@@ -74,6 +75,7 @@ function getSavingPlan(goal: SavingsGoal) {
 }
 
 export default function GoalDetailScreen() {
+  const { colors } = useAppTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data, isLoading } = useGoal(id);
   const goal = data?.data;

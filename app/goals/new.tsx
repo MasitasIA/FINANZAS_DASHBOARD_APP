@@ -13,7 +13,8 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Button, Card, Typography } from "@/components/ui";
 import { useCreateGoal } from "@/hooks/useGoals";
 import type { Currency } from "@/types";
-import { colors, accountColors } from "../../tailwind.config";
+import { accountColors } from "../../tailwind.config";
+import { useAppTheme } from "@/theme/useAppTheme";
 
 const CURRENCIES: Currency[] = ["ARS", "USD", "EUR"];
 
@@ -38,6 +39,7 @@ const PRESET_DEADLINES = [
 ];
 
 export default function NewGoalScreen() {
+  const { colors } = useAppTheme();
   const [name, setName] = useState("");
   const [targetAmount, setTargetAmount] = useState("");
   const [initialAmount, setInitialAmount] = useState("");

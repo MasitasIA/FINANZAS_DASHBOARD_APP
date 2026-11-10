@@ -3,7 +3,7 @@ import {
   type PressableProps,
   ActivityIndicator,
 } from "react-native";
-import { colors } from "../../../tailwind.config";
+import { useAppTheme } from "@/theme/useAppTheme";
 import { Typography } from "./Typography";
 
 interface ButtonProps extends PressableProps {
@@ -15,11 +15,11 @@ interface ButtonProps extends PressableProps {
 }
 
 const variantStyles: Record<NonNullable<ButtonProps["variant"]>, string> = {
-  primary: "bg-primary-600 active:bg-primary-700",
+  primary: "bg-primary-600 active:opacity-80",
   secondary:
     "bg-surface-700 active:bg-surface-600 border border-surface-600/50",
   ghost: "bg-transparent active:bg-surface-700",
-  danger: "bg-danger-600 active:bg-danger-700",
+  danger: "bg-danger-600 active:opacity-80",
 };
 
 const sizeStyles: Record<NonNullable<ButtonProps["size"]>, string> = {
@@ -51,6 +51,7 @@ export function Button({
   disabled,
   ...props
 }: ButtonProps) {
+  const { colors } = useAppTheme();
   const isDisabled = disabled || loading;
 
   return (

@@ -30,7 +30,8 @@ import {
   formatRelativeDate,
 } from "@/utils/formatters";
 import type { Transaction } from "@/types";
-import { colors, accountColors } from "../../tailwind.config";
+import { accountColors } from "../../tailwind.config";
+import { useAppTheme } from "@/theme/useAppTheme";
 
 const ACCOUNT_ICONS: (keyof typeof MaterialCommunityIcons.glyphMap)[] = [
   "bank",
@@ -43,6 +44,7 @@ const ACCOUNT_ICONS: (keyof typeof MaterialCommunityIcons.glyphMap)[] = [
 ];
 
 export default function AccountDetailScreen() {
+  const { colors } = useAppTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: accountData, isLoading: loadingAccount } = useAccount(id);
   const { data: txData, isLoading: loadingTx } = useTransactions({

@@ -58,7 +58,7 @@ npm run d1:init              # apply schema.sql to remote Cloudflare D1
 finanzas_dashboard/
 │
 ├── app/                          ← Expo Router file-based routes
-│   ├── _layout.tsx               ← Root layout: Auth guard, OTA banner, RecurringAutoProcessor, Stack
+│   ├── _layout.tsx               ← Root layout: ThemeProvider + ThemeSync, Auth guard, OTA banner, RecurringAutoProcessor, Stack
 │   ├── login.tsx                 ← Firebase Login / Registration screen
 │   ├── (tabs)/
 │   │   ├── _layout.tsx           ← Tab bar (4 tabs)
@@ -98,14 +98,21 @@ finanzas_dashboard/
     │   ├── useTransactions.ts
     │   ├── useGoals.ts           ← Also contains useMonthlyReport, useAnnualReport & useSystemStats
     │   └── useRecurringExpenses.ts ← Hooks for recurring items, user settings & auto-processing
+    ├── theme/                    ← Light/Dark theming (global styles)
+    │   ├── palettes.js           ← SINGLE source of truth for colors (light + dark) → CSS vars; consumed by tailwind.config.js
+    │   ├── palettes.d.ts         ← Types for palettes.js
+    │   ├── ThemeProvider.tsx     ← Injects `--color-*` vars (nativewind `vars()`), colorScheme, web <html> vars; also ThemeSync (D1 → store)
+    │   └── useAppTheme.ts        ← useAppTheme() (mode/isDark/colors hex) & useSetTheme() (optimistic + PUT /user-settings)
     ├── store/                    ← Zustand stores (UI-only state)
-    │   └── reports.store.ts
+    │   ├── reports.store.ts
+    │   └── theme.store.ts        ← Active theme mode + AsyncStorage cache (avoids flash on startup)
     ├── components/
     │   ├── ui/                   ← Design system primitives
     │   │   ├── Typography.tsx    ← variant prop: h1/h2/h3/body/caption/label
     │   │   ├── Button.tsx        ← variant: primary/secondary/ghost/danger
     │   │   ├── Card.tsx          ← Surface with rounded corners (extends ViewProps)
     │   │   ├── PieChart.tsx      ← Interactive SVG donut/pie chart
+    │   │   ├── ThemeToggle.tsx   ← Dark-mode switch (variant: row | icon)
     │   │   └── index.ts          ← Barrel export
     │   ├── accounts/AccountCard.tsx
     │   ├── goals/GoalCard.tsx
@@ -171,7 +178,7 @@ Full schema is in [`schema.sql`](./schema.sql). Summary:
 | `transactions` | `id, user_id, author_name, account_id, category_id, type, amount, currency, description, note, date, to_account_id, goal_id` |
 | `savings_goals` | `id, user_id, name, target_amount, current_amount, currency, deadline, icon, color, status` |
 | `recurring_expenses` | `id, user_id, type (expense\|income), account_id, category_id, name, amount, currency, due_date, due_day, frequency, is_variable, icon, color, is_active, last_paid_date` |
-| `user_settings` | `user_id (PK), reminder_time, updated_at` |
+| `user_settings` | `user_id (PK), reminder_time, theme (light\|dark, default light), updated_at` |
 | `shared_members` | `id, resource_type (account\|goal), resource_id, owner_id, user_id, display_name, role (owner\|editor)` |
 | `share_invites` | `code (PK, UNPO-XXXX), resource_type (account\|goal), resource_id, owner_id, owner_name, expires_at` |
 
@@ -196,6 +203,8 @@ Use **Tailwind class names** via the `className` prop on any React Native compon
 
 ### Color Palette
 
+Values below are the **light** theme; the **dark** equivalents live in [`src/theme/palettes.js`](./src/theme/palettes.js) (see *Theming* below).
+
 | Token | Hex | Use |
 | --- | --- | --- |
 | `bg-surface-900` | `#faf7f5` | Main background (warm ivory/cream) |
@@ -210,6 +219,15 @@ Use **Tailwind class names** via the `className` prop on any React Native compon
 | `text-text-primary` | `#1c1917` | Main text (warm stone black) |
 | `text-text-secondary` | `#68615e` | Secondary text (warm stone gray) |
 | `text-text-muted` | `#9c928d` | Placeholder, disabled |
+
+### Theming (Light / Dark mode, per user)
+
+- The user's choice lives in **`user_settings.theme`** (`"light"` default | `"dark"`), read/written through `GET/PUT /user-settings` (`reminderTime` and `theme` are both optional on PUT; at least one is required). The Worker adds the column automatically (`ALTER TABLE ... ADD COLUMN theme` inside `ensureSharedSchema`).
+- **Colors are never hard-coded per theme in screens.** `src/theme/palettes.js` defines `lightColors` / `darkColors`; `tailwind.config.js` maps `primary / success / danger / warning / surface / text-*` to CSS variables (`rgb(var(--color-surface-900) / <alpha-value>)`), so `bg-surface-900`, `text-text-primary`, `bg-primary-600/15`… switch automatically. **Do not** use `dark:` variants for these tokens. To add or tweak a color, edit `palettes.js` only (both themes).
+- For **JS color values** (icon `color`, `ActivityIndicator`, `headerStyle`, SVG fills, `Switch`) use `const { colors, isDark } = useAppTheme();` — **never** `import { colors } from "tailwind.config"` in components (that is always the light palette). `accountColors` / brand accents are theme-independent and may still be imported.
+- Dark tokens flip the tints (`*-50/100/200/300`) and text shades (`primary-700/800/900`, `success-600`, `danger-600`…) for contrast; avoid `active:bg-*-700` pressed states (use `active:opacity-80`).
+- Switching: `useSetTheme().setTheme("dark" | "light")` (optimistic, rolls back on error) or the `<ThemeToggle />` component. `<ThemeSync>` applies the stored theme after login; `useThemeStore` caches the last mode in AsyncStorage.
+- Text on colored backgrounds (`text-white` over `bg-primary-600`) is fine in both themes.
 
 ### Typography & Card Gotchas
 

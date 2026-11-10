@@ -12,7 +12,7 @@ import Constants from "expo-constants";
 import * as Updates from "expo-updates";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { signOut } from "firebase/auth";
-import { Card, Typography } from "@/components/ui";
+import { Card, ThemeToggle, Typography } from "@/components/ui";
 import { AccountCard } from "@/components/accounts/AccountCard";
 import { GoalCard } from "@/components/goals/GoalCard";
 import { useAccounts } from "@/hooks/useAccounts";
@@ -21,7 +21,7 @@ import { useRecurringExpenses } from "@/hooks/useRecurringExpenses";
 import { auth } from "@/lib/firebase";
 import { formatCurrency } from "@/utils/formatters";
 import appConfig from "../../app.json";
-import { colors } from "../../tailwind.config";
+import { useAppTheme } from "@/theme/useAppTheme";
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes <= 0) return "0 B";
@@ -36,6 +36,7 @@ function formatBytes(bytes: number): string {
 }
 
 export default function DashboardScreen() {
+  const { colors } = useAppTheme();
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
@@ -155,6 +156,7 @@ export default function DashboardScreen() {
                 </Typography>
               </View>
               <View className="flex-row items-center gap-1.5">
+                <ThemeToggle variant="icon" />
                 <Pressable
                   onPress={() => setShowInfoModal(true)}
                   accessibilityLabel="Información de la app"
@@ -559,6 +561,9 @@ export default function DashboardScreen() {
               </View>
             ) : (
               <View className="gap-3">
+                {/* Apariencia: modo oscuro por usuario */}
+                <ThemeToggle />
+
                 {/* Tarjeta: Usuarios activos */}
                 <View className="flex-row items-center justify-between bg-surface-900 px-3.5 py-3 rounded-2xl border border-surface-600/60">
                   <View className="flex-row items-center gap-2.5">

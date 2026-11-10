@@ -15,7 +15,7 @@ import {
   useLeaveSharedResource,
 } from "@/hooks/useAccounts";
 import type { SharedMember, SharedResourceType } from "@/types";
-import { colors } from "../../../tailwind.config";
+import { useAppTheme } from "@/theme/useAppTheme";
 
 interface JoinWithCodeModalProps {
   visible: boolean;
@@ -26,6 +26,7 @@ export function JoinWithCodeModal({
   visible,
   onClose,
 }: JoinWithCodeModalProps) {
+  const { colors } = useAppTheme();
   const [code, setCode] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const { mutate: joinResource, isPending } = useJoinSharedResource();
@@ -169,6 +170,7 @@ export function ShareResourceModal({
   members,
   onLeftResource,
 }: ShareResourceModalProps) {
+  const { colors } = useAppTheme();
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const { mutate: createInvite, isPending: isGenerating } =

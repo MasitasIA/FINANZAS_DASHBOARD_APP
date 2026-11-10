@@ -3,3 +3,4 @@ export { Typography }  from "./Typography";
 export { Button }      from "./Button";
 export { Card }        from "./Card";
 export { PieChart }    from "./PieChart";
+export { ThemeToggle } from "./ThemeToggle";

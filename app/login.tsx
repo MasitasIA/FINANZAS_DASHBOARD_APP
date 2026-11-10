@@ -18,7 +18,7 @@ import {
 } from "firebase/auth";
 import { auth, googleProvider } from "@/lib/firebase";
 import { Button, Card, Typography } from "@/components/ui";
-import { colors } from "../tailwind.config";
+import { useAppTheme } from "@/theme/useAppTheme";
 
 function translateFirebaseError(code?: string): string {
   switch (code) {
@@ -42,6 +42,7 @@ function translateFirebaseError(code?: string): string {
 }
 
 export default function LoginScreen() {
+  const { colors } = useAppTheme();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

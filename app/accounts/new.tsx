@@ -13,7 +13,8 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Button, Card, Typography } from "@/components/ui";
 import { useCreateAccount } from "@/hooks/useAccounts";
 import type { AccountType, Currency } from "@/types";
-import { colors, accountColors } from "../../tailwind.config";
+import { accountColors } from "../../tailwind.config";
+import { useAppTheme } from "@/theme/useAppTheme";
 
 const ACCOUNT_TYPES: {
   type: AccountType;
@@ -42,6 +43,7 @@ const ICONS: (keyof typeof MaterialCommunityIcons.glyphMap)[] = [
 ];
 
 export default function NewAccountScreen() {
+  const { colors } = useAppTheme();
   const [name, setName] = useState("");
   const [type, setType] = useState<AccountType>("checking");
   const [currency, setCurrency] = useState<Currency>("ARS");

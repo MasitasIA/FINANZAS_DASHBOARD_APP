@@ -4,7 +4,7 @@ import Svg, { Circle, G, Path } from "react-native-svg";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Typography } from "./Typography";
 import { formatCurrency } from "@/utils/formatters";
-import { colors } from "../../../tailwind.config";
+import { useAppTheme } from "@/theme/useAppTheme";
 
 export interface PieChartDataItem {
   id: string;
@@ -116,6 +116,7 @@ export function PieChart({
   allowToggleMode = true,
   onSelectItem,
 }: PieChartProps) {
+  const { colors } = useAppTheme();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isDonut, setIsDonut] = useState(true);
 

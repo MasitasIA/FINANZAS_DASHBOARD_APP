@@ -28,7 +28,7 @@ import {
 } from "@/lib/notifications";
 import type { RecurringExpense } from "@/types";
 import { formatCurrency } from "@/utils/formatters";
-import { colors } from "../../../tailwind.config";
+import { useAppTheme } from "@/theme/useAppTheme";
 
 function getLocalDateAndTime(): { localDate: string; localTime: string } {
   const now = new Date();
@@ -44,6 +44,7 @@ function getLocalDateAndTime(): { localDate: string; localTime: string } {
 }
 
 export function RecurringAutoProcessor({ enabled }: { enabled: boolean }) {
+  const { colors } = useAppTheme();
   const { data: recurringData } = useRecurringExpenses();
   const { data: accountsData } = useAccounts();
   const { data: userSettings } = useUserSettings();

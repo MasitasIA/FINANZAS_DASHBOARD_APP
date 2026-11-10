@@ -7,6 +7,7 @@ import type {
   RecurringExpense,
   RecurringProcessResult,
   UserSettings,
+  UserSettingsPatch,
 } from "@/types";
 
 const USE_MOCK = process.env.EXPO_PUBLIC_USE_MOCK === "true";
@@ -61,10 +62,10 @@ export const recurringExpensesService = {
       ? mockRecurringExpenseHandlers.getSettings()
       : api.get<ApiResponse<UserSettings>>("/user-settings"),
 
-  updateSettings: (reminderTime: string) =>
+  updateSettings: (patch: UserSettingsPatch) =>
     USE_MOCK
-      ? mockRecurringExpenseHandlers.updateSettings(reminderTime)
-      : api.put<ApiResponse<UserSettings>>("/user-settings", { reminderTime }),
+      ? mockRecurringExpenseHandlers.updateSettings(patch)
+      : api.put<ApiResponse<UserSettings>>("/user-settings", patch),
 
   processDue: (payload?: { localDate?: string; localTime?: string }) =>
     USE_MOCK

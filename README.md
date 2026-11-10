@@ -25,6 +25,10 @@ Aplicación móvil multi-usuario de finanzas personales desarrollada con **React
   - **Aviso anticipado (1 día antes)**: notifica en el celular cuando mañana vas a cobrar un ingreso (`💰 Mañana cobras...`) o vence un gasto (`📅 Mañana vence...`).
   - **Aviso el día de vencimiento**: a la hora elegida por el usuario, envía una notificación interactiva (`🔔 ¿Cambió el precio de...?` para variables o `⚡ Hoy se acredita/descuenta...` para fijos) que al tocarse abre directamente el cuadro de confirmación en la app.
   - **Confirmación de ejecución automática**: notifica inmediatamente cuando un movimiento fijo fue acreditado o descontado.
+- **🌙 Modo Oscuro por Usuario**:
+  - Cada usuario puede activar el **modo oscuro** desde el Dashboard (botón ☀️/🌙 del encabezado o interruptor en *Información del sistema*). El cambio es instantáneo.
+  - La preferencia se guarda **por cuenta en Cloudflare D1** (`user_settings.theme`, valores `light` | `dark`, **por defecto `light`**) y se aplica automáticamente al iniciar sesión en cualquier dispositivo.
+  - **Estilos globales con variables CSS**: todos los colores (`surface`, `text`, `primary`, `success`, `danger`, `warning`) se definen una sola vez en [`src/theme/palettes.js`](src/theme/palettes.js) y NativeWind los resuelve en runtime, por lo que las clases (`bg-surface-900`, `text-text-primary`…) cambian solas con el tema.
 - **Cuentas y Metas Compartidas (`UNPO-XXXX`)**:
   - Permite compartir tanto **Cuentas** como **Metas de Ahorro** con otros usuarios mediante **códigos de invitación temporales (`UNPO-XXXX`)** válidos por 24 horas.
   - **Registro de autoría (`author_name`)**: cada gasto, ingreso, aporte o retiro dentro de una cuenta o meta compartida muestra qué miembro lo realizó (`• 👤 Nombre`).

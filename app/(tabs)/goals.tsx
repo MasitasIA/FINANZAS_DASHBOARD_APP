@@ -7,9 +7,10 @@ import { Button, Typography } from "@/components/ui";
 import { GoalCard } from "@/components/goals/GoalCard";
 import { JoinWithCodeModal } from "@/components/shared/ShareModals";
 import { useGoals } from "@/hooks/useGoals";
-import { colors } from "../../tailwind.config";
+import { useAppTheme } from "@/theme/useAppTheme";
 
 export default function GoalsScreen() {
+  const { colors } = useAppTheme();
   const { data, isLoading, error, refetch } = useGoals();
   const [joinVisible, setJoinVisible] = useState(false);
   const goals = data?.data ?? [];

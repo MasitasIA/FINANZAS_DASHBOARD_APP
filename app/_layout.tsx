@@ -1,5 +1,7 @@
 import "../global.css";
-import { colors } from "../tailwind.config";
+import { useAppTheme } from "@/theme/useAppTheme";
+import { ThemeProvider, ThemeSync } from "@/theme/ThemeProvider";
+import { useThemeStore } from "@/store/theme.store";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -51,16 +53,16 @@ export default function RootLayout() {
   });
 
   const [user, setUser] = useState<User | null>(null);
-  const [authReady, setAuthReady] = useState(
-    USE_MOCK || !isFirebaseConfigured,
-  );
+  const [authReady, setAuthReady] = useState(USE_MOCK || !isFirebaseConfigured);
   const [updateReady, setUpdateReady] = useState(false);
   const lastUidRef = useRef<string | null>(null);
   const segments = useSegments();
+  const { colors, isDark } = useAppTheme();
+  const themeHydrated = useThemeStore((s) => s.hydrated);
 
   useEffect(() => {
-    if (loaded) SplashScreen.hideAsync();
-  }, [loaded]);
+    if (loaded && themeHydrated) SplashScreen.hideAsync();
+  }, [loaded, themeHydrated]);
 
   // Verificación silenciosa de actualizaciones OTA al iniciar y al volver a primer plano
   useEffect(() => {
@@ -136,113 +138,125 @@ export default function RootLayout() {
     };
   }, []);
 
-  if (!loaded || !authReady) {
+  if (!loaded || !authReady || !themeHydrated) {
     return (
-      <View className="flex-1 bg-surface-900 items-center justify-center">
-        <ActivityIndicator size="large" color={colors.primary[500]} />
-      </View>
+      <ThemeProvider>
+        <View className="flex-1 bg-surface-900 items-center justify-center">
+          <ActivityIndicator size="large" color={colors.primary[500]} />
+        </View>
+      </ThemeProvider>
     );
   }
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <StatusBar style="dark" />
-      <NavigationBar hidden style="light" />
-      <RecurringAutoProcessor
-        enabled={USE_MOCK || !isFirebaseConfigured || Boolean(user)}
-      />
-      {updateReady && (
-        <View className="bg-primary-600 px-4 pt-10 pb-2.5 flex-row items-center justify-between">
-          <View className="flex-row items-center gap-2 flex-1 mr-2">
-            <MaterialCommunityIcons
-              name="cloud-check-outline"
-              size={18}
-              color={colors.white}
-            />
-            <Typography
-              variant="caption"
-              className="text-white font-semibold flex-1"
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <ThemeSync
+          enabled={USE_MOCK || !isFirebaseConfigured || Boolean(user)}
+        />
+        <StatusBar style={isDark ? "light" : "dark"} />
+        <NavigationBar hidden style="light" />
+        <RecurringAutoProcessor
+          enabled={USE_MOCK || !isFirebaseConfigured || Boolean(user)}
+        />
+        {updateReady && (
+          <View className="bg-primary-600 px-4 pt-10 pb-2.5 flex-row items-center justify-between">
+            <View className="flex-row items-center gap-2 flex-1 mr-2">
+              <MaterialCommunityIcons
+                name="cloud-check-outline"
+                size={18}
+                color={colors.white}
+              />
+              <Typography
+                variant="caption"
+                className="text-white font-semibold flex-1"
+              >
+                Nueva versión descargada y lista
+              </Typography>
+            </View>
+            <Pressable
+              onPress={() => Updates.reloadAsync()}
+              className="bg-white px-3 py-1 rounded-full active:opacity-80"
             >
-              Nueva versión descargada y lista
-            </Typography>
+              <Typography
+                variant="caption"
+                className="text-primary-600 font-bold"
+              >
+                Actualizar ahora
+              </Typography>
+            </Pressable>
           </View>
-          <Pressable
-            onPress={() => Updates.reloadAsync()}
-            className="bg-white px-3 py-1 rounded-full active:opacity-80"
-          >
-            <Typography
-              variant="caption"
-              className="text-primary-600 font-bold"
-            >
-              Actualizar ahora
-            </Typography>
-          </Pressable>
-        </View>
-      )}
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="login" options={{ headerShown: false }} />
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen
-          name="accounts/[id]"
-          options={{
-            headerShown: true,
-            headerStyle: { backgroundColor: colors.surface[800] },
-            headerTintColor: colors.text.primary,
-            headerTitle: "Cuenta",
-            headerBackButtonDisplayMode: "minimal",
+        )}
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: colors.surface[900] },
           }}
-        />
-        <Stack.Screen
-          name="goals/[id]"
-          options={{
-            headerShown: true,
-            headerStyle: { backgroundColor: colors.surface[800] },
-            headerTintColor: colors.text.primary,
-            headerTitle: "Meta de ahorro",
-            headerBackButtonDisplayMode: "minimal",
-          }}
-        />
-        <Stack.Screen
-          name="accounts/new"
-          options={{
-            presentation: "modal",
-            headerShown: true,
-            headerStyle: { backgroundColor: colors.surface[800] },
-            headerTintColor: colors.text.primary,
-            headerTitle: "Nueva cuenta",
-          }}
-        />
-        <Stack.Screen
-          name="goals/new"
-          options={{
-            presentation: "modal",
-            headerShown: true,
-            headerStyle: { backgroundColor: colors.surface[800] },
-            headerTintColor: colors.text.primary,
-            headerTitle: "Nueva meta",
-          }}
-        />
-        <Stack.Screen
-          name="transaction/new"
-          options={{
-            presentation: "modal",
-            headerShown: true,
-            headerStyle: { backgroundColor: colors.surface[800] },
-            headerTintColor: colors.text.primary,
-            headerTitle: "Nueva transacción",
-          }}
-        />
-        <Stack.Screen
-          name="recurring/index"
-          options={{
-            headerShown: true,
-            headerStyle: { backgroundColor: colors.surface[800] },
-            headerTintColor: colors.text.primary,
-            headerTitle: "Gastos e ingresos automáticos",
-            headerBackButtonDisplayMode: "minimal",
-          }}
-        />
-      </Stack>
-    </QueryClientProvider>
+        >
+          <Stack.Screen name="login" options={{ headerShown: false }} />
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen
+            name="accounts/[id]"
+            options={{
+              headerShown: true,
+              headerStyle: { backgroundColor: colors.surface[800] },
+              headerTintColor: colors.text.primary,
+              headerTitle: "Cuenta",
+              headerBackButtonDisplayMode: "minimal",
+            }}
+          />
+          <Stack.Screen
+            name="goals/[id]"
+            options={{
+              headerShown: true,
+              headerStyle: { backgroundColor: colors.surface[800] },
+              headerTintColor: colors.text.primary,
+              headerTitle: "Meta de ahorro",
+              headerBackButtonDisplayMode: "minimal",
+            }}
+          />
+          <Stack.Screen
+            name="accounts/new"
+            options={{
+              presentation: "modal",
+              headerShown: true,
+              headerStyle: { backgroundColor: colors.surface[800] },
+              headerTintColor: colors.text.primary,
+              headerTitle: "Nueva cuenta",
+            }}
+          />
+          <Stack.Screen
+            name="goals/new"
+            options={{
+              presentation: "modal",
+              headerShown: true,
+              headerStyle: { backgroundColor: colors.surface[800] },
+              headerTintColor: colors.text.primary,
+              headerTitle: "Nueva meta",
+            }}
+          />
+          <Stack.Screen
+            name="transaction/new"
+            options={{
+              presentation: "modal",
+              headerShown: true,
+              headerStyle: { backgroundColor: colors.surface[800] },
+              headerTintColor: colors.text.primary,
+              headerTitle: "Nueva transacción",
+            }}
+          />
+          <Stack.Screen
+            name="recurring/index"
+            options={{
+              headerShown: true,
+              headerStyle: { backgroundColor: colors.surface[800] },
+              headerTintColor: colors.text.primary,
+              headerTitle: "Gastos e ingresos automáticos",
+              headerBackButtonDisplayMode: "minimal",
+            }}
+          />
+        </Stack>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }
