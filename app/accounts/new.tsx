@@ -203,6 +203,17 @@ export default function NewAccountScreen() {
                     />
                   </View>
                 </View>
+
+                <View className="flex-row items-center gap-1.5 pt-0.5">
+                  <MaterialCommunityIcons
+                    name="bell-outline"
+                    size={14}
+                    color={colors.primary[500]}
+                  />
+                  <Typography variant="caption" muted className="text-[11px] flex-1">
+                    Te avisaremos al celular 1 día antes del cierre y del vencimiento.
+                  </Typography>
+                </View>
               </Card>
             </>
           ) : (

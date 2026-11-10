@@ -22,6 +22,7 @@ Aplicación móvil multi-usuario de finanzas personales desarrollada con **React
     - **⚡ Monto Fijo (Automático)**: se descuenta o acredita automáticamente al llegar el día indicado y avanza la fecha al próximo ciclo.
     - **🔔 Monto Variable (Consultar)**: espera al día indicado y a la **hora personal configurada por cada usuario** (`user_settings.reminder_time`) para preguntar si el precio/ingreso cambió este mes o se mantiene igual, permitiendo actualizar opcionalmente el monto base para futuros meses.
 - **Sistema de Notificaciones Móviles (`expo-notifications`)**:
+  - **Tarjetas de crédito (Cierre y Vencimiento)**: notifica 1 día antes a la hora configurada por el usuario (`💳 Mañana cierra tu tarjeta...` con el consumo acumulado para revisar movimientos, y `📅 Mañana vence tu tarjeta...` con el saldo pendiente de pago para no olvidar abonarlo). Al tocar la notificación, abre directamente el detalle de la tarjeta.
   - **Aviso anticipado (1 día antes)**: notifica en el celular cuando mañana vas a cobrar un ingreso (`💰 Mañana cobras...`) o vence un gasto (`📅 Mañana vence...`).
   - **Aviso el día de vencimiento**: a la hora elegida por el usuario, envía una notificación interactiva (`🔔 ¿Cambió el precio de...?` para variables o `⚡ Hoy se acredita/descuenta...` para fijos) que al tocarse abre directamente el cuadro de confirmación en la app.
   - **Confirmación de ejecución automática**: notifica inmediatamente cuando un movimiento fijo fue acreditado o descontado.

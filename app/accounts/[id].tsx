@@ -383,6 +383,19 @@ export default function AccountDetailScreen() {
               </View>
             )}
 
+            {(account.closingDay || account.dueDay) && (
+              <View className="flex-row items-center justify-center gap-1.5 -mt-1 mb-1">
+                <MaterialCommunityIcons
+                  name="bell-ring-outline"
+                  size={12}
+                  color={colors.primary[500]}
+                />
+                <Typography variant="caption" muted className="text-[11px]">
+                  Avisos automáticos activos: 1 día antes a tu celular
+                </Typography>
+              </View>
+            )}
+
             {/* Acciones rápidas de tarjeta */}
             <View className="flex-row gap-3 pt-1">
               <Button
@@ -585,6 +598,17 @@ export default function AccountDetailScreen() {
                         placeholderTextColor={colors.text.muted}
                       />
                     </View>
+                  </View>
+
+                  <View className="flex-row items-center gap-1.5 -mt-1">
+                    <MaterialCommunityIcons
+                      name="bell-outline"
+                      size={13}
+                      color={colors.primary[500]}
+                    />
+                    <Typography variant="caption" muted className="text-[11px] flex-1">
+                      Te avisaremos 1 día antes del cierre y del vencimiento.
+                    </Typography>
                   </View>
                 </>
               )}

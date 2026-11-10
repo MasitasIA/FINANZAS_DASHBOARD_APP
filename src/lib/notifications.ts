@@ -39,9 +39,9 @@ export async function initializeNotifications(): Promise<boolean> {
 
     if (Platform.OS === "android") {
       await setNotificationChannelAsync(RECURRING_CHANNEL_ID, {
-        name: "Gastos e Ingresos Automáticos",
+        name: "Finanzas y Recordatorios",
         description:
-          "Avisos de próximos cobros, vencimientos de gastos y consultas de cambio de precio",
+          "Avisos de cobros, vencimientos de gastos, cierres y vencimientos de tarjetas de crédito",
         importance: AndroidImportance.MAX,
         vibrationPattern: [0, 250, 200, 250],
         lightColor: "#c8102e",
@@ -98,11 +98,58 @@ function buildLocalTriggerDate(
 }
 
 /**
- * Sincroniza todas las notificaciones locales de gastos e ingresos automáticos:
- * 1) Aviso 1 día antes ("Mañana cobras..." / "Mañana vence...")
- * 2) Aviso el mismo día a la hora personal del usuario:
- *    - Si es Variable: pregunta si cambió el precio y si desea registrarlo
- *    - Si es Fijo: avisa que hoy se acredita/descuenta automáticamente
+ * Obtiene las fechas de disparo para un día del mes determinado (1-31) con un offset en días
+ * (ej: -1 para 1 día antes), devolviendo las próximas ocurrencias futuras (hasta `maxCycles` ciclos/meses).
+ */
+function getUpcomingMonthlyTriggerDates(
+  dayOfMonth: number,
+  timeStr: string,
+  daysOffset = 0,
+  maxCycles = 2,
+  referenceDate = new Date(),
+): { triggerDate: Date; cycleKey: string }[] {
+  if (!dayOfMonth || dayOfMonth < 1 || dayOfMonth > 31) return [];
+
+  const [hh, mm] = /^([01]\d|2[0-3]):([0-5]\d)$/.test(timeStr)
+    ? timeStr.split(":").map((n) => parseInt(n, 10))
+    : [9, 0];
+
+  const currentYear = referenceDate.getFullYear();
+  const currentMonth = referenceDate.getMonth(); // 0-11
+  const nowMs = referenceDate.getTime();
+  const results: { triggerDate: Date; cycleKey: string }[] = [];
+
+  for (let mOffset = 0; mOffset < 4 && results.length < maxCycles; mOffset++) {
+    const candidateMonthIndex = currentMonth + mOffset;
+    const candidateDate = new Date(currentYear, candidateMonthIndex, 1);
+    const year = candidateDate.getFullYear();
+    const month = candidateDate.getMonth(); // 0-11
+
+    const lastDayOfMonth = new Date(year, month + 1, 0).getDate();
+    const clampedDay = Math.min(dayOfMonth, lastDayOfMonth);
+
+    const targetDate = new Date(year, month, clampedDay, hh, mm, 0, 0);
+    if (daysOffset !== 0) {
+      targetDate.setDate(targetDate.getDate() + daysOffset);
+    }
+
+    if (targetDate.getTime() > nowMs + 5_000) {
+      const cycleKey = `${year}-${String(month + 1).padStart(2, "0")}`;
+      results.push({ triggerDate: targetDate, cycleKey });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Sincroniza todas las notificaciones locales del usuario:
+ * 1) Gastos e ingresos automáticos:
+ *    - Aviso 1 día antes ("Mañana cobras..." / "Mañana vence...")
+ *    - Aviso el mismo día a la hora personal del usuario (variable o fijo)
+ * 2) Tarjetas de crédito:
+ *    - Aviso 1 día antes del cierre del resumen ("Mañana cierra tu tarjeta...")
+ *    - Aviso 1 día antes del vencimiento del pago ("Mañana vence tu tarjeta...")
  */
 export async function syncRecurringNotifications(
   items: RecurringExpense[],
@@ -115,10 +162,13 @@ export async function syncRecurringNotifications(
     const hasPermission = await initializeNotifications();
     if (!hasPermission) return 0;
 
-    // Cancelar notificaciones previas de movimientos automáticos para evitar duplicados
+    // Cancelar notificaciones previas de automáticos y tarjetas para evitar duplicados
     const scheduled = await getAllScheduledNotificationsAsync();
     for (const req of scheduled) {
-      if (req.identifier.startsWith("rec-")) {
+      if (
+        req.identifier.startsWith("rec-") ||
+        req.identifier.startsWith("card-")
+      ) {
         await cancelScheduledNotificationAsync(req.identifier);
       }
     }
@@ -126,6 +176,7 @@ export async function syncRecurringNotifications(
     const now = Date.now();
     let scheduledCount = 0;
 
+    // ── 1. Notificaciones de automáticos (Gastos e Ingresos) ─────────────────
     for (const item of items) {
       if (!item.isActive || !item.dueDate) continue;
 
@@ -134,7 +185,7 @@ export async function syncRecurringNotifications(
       const accountName = acc?.name ?? item.accountName ?? "tu cuenta";
       const formattedAmount = formatCurrency(item.amount, item.currency);
 
-      // 1. Aviso anticipado: 1 día antes del vencimiento/cobro a la hora del usuario
+      // 1.1 Aviso anticipado: 1 día antes del vencimiento/cobro a la hora del usuario
       const dayBeforeDate = buildLocalTriggerDate(
         item.dueDate,
         reminderTime,
@@ -165,7 +216,7 @@ export async function syncRecurringNotifications(
         scheduledCount += 1;
       }
 
-      // 2. Aviso el día del vencimiento/cobro a la hora exacta configurada por el usuario
+      // 1.2 Aviso el día del vencimiento/cobro a la hora exacta configurada por el usuario
       const dueDayDate = buildLocalTriggerDate(item.dueDate, reminderTime, 0);
       if (dueDayDate && dueDayDate.getTime() > now + 5_000) {
         if (item.isVariable) {
@@ -214,6 +265,82 @@ export async function syncRecurringNotifications(
           });
         }
         scheduledCount += 1;
+      }
+    }
+
+    // ── 2. Notificaciones de Tarjetas de Crédito (Cierre y Vencimiento) ──────
+    const creditAccounts = accounts.filter(
+      (a) => a.type === "credit" && (a.closingDay || a.dueDay),
+    );
+
+    for (const acc of creditAccounts) {
+      const hasDebt = acc.balance < 0;
+      const debtAmount = formatCurrency(Math.abs(acc.balance), acc.currency);
+
+      // 2.1 Aviso 1 día antes del Cierre del resumen
+      if (acc.closingDay) {
+        const triggers = getUpcomingMonthlyTriggerDates(
+          acc.closingDay,
+          reminderTime,
+          -1, // 1 día antes del cierre
+          2,  // Programar los próximos 2 ciclos
+        );
+
+        for (const { triggerDate, cycleKey } of triggers) {
+          await scheduleNotificationAsync({
+            identifier: `card-closing-${acc.id}-${cycleKey}`,
+            content: {
+              title: `💳 Mañana cierra tu tarjeta: ${acc.name}`,
+              body: hasDebt
+                ? `Mañana (día ${acc.closingDay}) cierra el resumen de tu tarjeta. Consumo acumulado: ${debtAmount}. Revisa tus movimientos antes del corte.`
+                : `Mañana (día ${acc.closingDay}) cierra el resumen de tu tarjeta ${acc.name}. Revisa tus movimientos antes del corte.`,
+              sound: "default",
+              data: {
+                accountId: acc.id,
+                action: "open_account",
+              },
+            },
+            trigger: {
+              type: SchedulableTriggerInputTypes.DATE,
+              date: triggerDate,
+              channelId: RECURRING_CHANNEL_ID,
+            },
+          });
+          scheduledCount += 1;
+        }
+      }
+
+      // 2.2 Aviso 1 día antes del Vencimiento del pago
+      if (acc.dueDay) {
+        const triggers = getUpcomingMonthlyTriggerDates(
+          acc.dueDay,
+          reminderTime,
+          -1, // 1 día antes del vencimiento
+          2,  // Programar los próximos 2 ciclos
+        );
+
+        for (const { triggerDate, cycleKey } of triggers) {
+          await scheduleNotificationAsync({
+            identifier: `card-due-${acc.id}-${cycleKey}`,
+            content: {
+              title: `📅 Mañana vence tu tarjeta: ${acc.name}`,
+              body: hasDebt
+                ? `Mañana (día ${acc.dueDay}) vence el resumen de tu tarjeta. Saldo a abonar: ${debtAmount}. Recuerda pagar a tiempo para evitar intereses.`
+                : `Mañana (día ${acc.dueDay}) vence el pago de tu tarjeta ${acc.name}. Recuerda abonar a tiempo para evitar recargos.`,
+              sound: "default",
+              data: {
+                accountId: acc.id,
+                action: "open_account",
+              },
+            },
+            trigger: {
+              type: SchedulableTriggerInputTypes.DATE,
+              date: triggerDate,
+              channelId: RECURRING_CHANNEL_ID,
+            },
+          });
+          scheduledCount += 1;
+        }
       }
     }
 
@@ -274,7 +401,7 @@ export async function sendTestNotification(
     await scheduleNotificationAsync({
       content: {
         title: "🔔 Notificaciones activas en UNPO: Finanzas",
-        body: `Te avisaremos 1 día antes de cada cobro o gasto, y a las ${reminderTime} hs te preguntaremos si cambió el precio de tus automáticos variables.`,
+        body: `Te avisaremos 1 día antes de cobros, gastos y del cierre o vencimiento de tus tarjetas, y a las ${reminderTime} hs si cambió el precio de tus automáticos.`,
         sound: "default",
         data: { action: "open_recurring" },
       },

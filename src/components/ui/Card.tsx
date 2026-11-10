@@ -5,6 +5,8 @@ interface CardProps extends ViewProps {
   bordered?: boolean;
   /** Padding interno predefinido */
   padding?: "none" | "sm" | "md" | "lg";
+  /** Variante semántica de color para el contenedor */
+  variant?: "default" | "income" | "expense";
 }
 
 const paddingStyles: Record<NonNullable<CardProps["padding"]>, string> = {
@@ -17,16 +19,24 @@ const paddingStyles: Record<NonNullable<CardProps["padding"]>, string> = {
 export function Card({
   bordered = false,
   padding = "md",
+  variant = "default",
   className = "",
   children,
   ...props
 }: CardProps) {
+  const variantStyles =
+    variant === "income"
+      ? "bg-success-500/10 border-success-500/35"
+      : variant === "expense"
+        ? "bg-danger-500/10 border-danger-500/35"
+        : "bg-surface-800 border-surface-600/70";
+
   return (
     <View
       className={`
-        bg-surface-800
         rounded-3xl
-        border border-surface-600/70
+        border
+        ${variantStyles}
         ${paddingStyles[padding]}
         ${className}
       `}

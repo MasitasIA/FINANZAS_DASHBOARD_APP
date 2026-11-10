@@ -143,7 +143,9 @@ finanzas_dashboard/
 
 ### 3. Mobile Notifications (`src/lib/notifications.ts`)
 
-- Schedules local notifications via `expo-notifications` whenever recurring items or `reminderTime` change:
+- Schedules local notifications via `expo-notifications` whenever accounts, recurring items or `reminderTime` change:
+  - **1 day before credit card closing (`closingDay`)** at `reminderTime`: closing statement reminder with accumulated balance. Tapping opens the card screen.
+  - **1 day before credit card due date (`dueDay`)** at `reminderTime`: payment due date reminder with balance to pay. Tapping opens the card screen.
   - **1 day before `dueDate`** at `reminderTime`: upcoming income/expense reminder.
   - **On `dueDate`** at `reminderTime`: variable price prompt notification (opens the confirmation modal on tap) or fixed auto-apply notification.
   - **Immediate notification** when fixed items are auto-applied.

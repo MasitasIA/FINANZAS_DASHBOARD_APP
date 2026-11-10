@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -18,10 +18,24 @@ import { GoalCard } from "@/components/goals/GoalCard";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useGoals, useSystemStats } from "@/hooks/useGoals";
 import { useRecurringExpenses } from "@/hooks/useRecurringExpenses";
+import { useTransactions } from "@/hooks/useTransactions";
 import { auth } from "@/lib/firebase";
 import { formatCurrency } from "@/utils/formatters";
 import appConfig from "../../app.json";
 import { useAppTheme } from "@/theme/useAppTheme";
+
+function parseTime(dateStr?: string | null): number {
+  if (!dateStr) return 0;
+  if (dateStr.includes("T")) {
+    const t = new Date(dateStr).getTime();
+    return isNaN(t) ? 0 : t;
+  }
+  const iso = `${dateStr.trim().replace(" ", "T")}Z`;
+  const t = new Date(iso).getTime();
+  if (!isNaN(t)) return t;
+  const fallback = new Date(dateStr).getTime();
+  return isNaN(fallback) ? 0 : fallback;
+}
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes <= 0) return "0 B";
@@ -44,6 +58,7 @@ export default function DashboardScreen() {
   const { data: goalsData, isLoading: loadingGoals } = useGoals();
   const { data: recurringData, isLoading: loadingRecurring } =
     useRecurringExpenses();
+  const { data: transactionsData } = useTransactions({ pageSize: 50 });
   const { data: statsData, isLoading: loadingStats } =
     useSystemStats(showInfoModal);
   const systemStats = statsData?.data;
@@ -80,9 +95,77 @@ export default function DashboardScreen() {
     }
   }
 
-  const accounts = accountsData?.data ?? [];
-  const goals = goalsData?.data ?? [];
-  const recurringExpenses = recurringData?.data ?? [];
+  const accounts = useMemo(() => accountsData?.data ?? [], [accountsData?.data]);
+  const goals = useMemo(() => goalsData?.data ?? [], [goalsData?.data]);
+  const recurringExpenses = useMemo(
+    () => recurringData?.data ?? [],
+    [recurringData?.data],
+  );
+  const transactions = useMemo(
+    () => transactionsData?.data ?? [],
+    [transactionsData?.data],
+  );
+
+  // Cuentas ordenadas por último uso (transacción reciente o fecha de actualización/creación)
+  const sortedAccounts = useMemo(() => {
+    const accountLastTxMap = transactions.reduce<Record<string, number>>(
+      (acc, tx) => {
+        const txTime = parseTime(tx.createdAt || tx.date);
+        if (tx.accountId) {
+          acc[tx.accountId] = Math.max(acc[tx.accountId] ?? 0, txTime);
+        }
+        if (tx.toAccountId) {
+          acc[tx.toAccountId] = Math.max(acc[tx.toAccountId] ?? 0, txTime);
+        }
+        return acc;
+      },
+      {},
+    );
+
+    return [...accounts].sort((a, b) => {
+      const lastUsedA = Math.max(
+        parseTime(a.updatedAt),
+        parseTime(a.createdAt),
+        accountLastTxMap[a.id] ?? 0,
+      );
+      const lastUsedB = Math.max(
+        parseTime(b.updatedAt),
+        parseTime(b.createdAt),
+        accountLastTxMap[b.id] ?? 0,
+      );
+      return lastUsedB - lastUsedA;
+    });
+  }, [accounts, transactions]);
+
+  // Metas activas ordenadas por último uso (transacción/aporte reciente o fecha de actualización/creación)
+  const sortedActiveGoals = useMemo(() => {
+    const goalLastTxMap = transactions.reduce<Record<string, number>>(
+      (acc, tx) => {
+        if (tx.goalId) {
+          const txTime = parseTime(tx.createdAt || tx.date);
+          acc[tx.goalId] = Math.max(acc[tx.goalId] ?? 0, txTime);
+        }
+        return acc;
+      },
+      {},
+    );
+
+    return goals
+      .filter((g) => g.status === "active")
+      .sort((a, b) => {
+        const lastUsedA = Math.max(
+          parseTime(a.updatedAt),
+          parseTime(a.createdAt),
+          goalLastTxMap[a.id] ?? 0,
+        );
+        const lastUsedB = Math.max(
+          parseTime(b.updatedAt),
+          parseTime(b.createdAt),
+          goalLastTxMap[b.id] ?? 0,
+        );
+        return lastUsedB - lastUsedA;
+      });
+  }, [goals, transactions]);
 
   // Ahorro acumulado en metas por moneda
   const goalsByCurrency = goals.reduce<Record<string, number>>((acc, g) => {
@@ -310,13 +393,13 @@ export default function DashboardScreen() {
 
           {loadingAccounts ? (
             <ActivityIndicator color={colors.primary[500]} />
-          ) : accounts.length === 0 ? (
+          ) : sortedAccounts.length === 0 ? (
             <Typography variant="caption" muted>
               Aún no tienes cuentas. ¡Agrega una!
             </Typography>
           ) : (
-            accounts
-              .slice(0, 3)
+            sortedAccounts
+              .slice(0, 5)
               .map((account) => (
                 <AccountCard
                   key={account.id}
@@ -342,14 +425,13 @@ export default function DashboardScreen() {
 
           {loadingGoals ? (
             <ActivityIndicator color={colors.primary[500]} />
-          ) : goals.filter((g) => g.status === "active").length === 0 ? (
+          ) : sortedActiveGoals.length === 0 ? (
             <Typography variant="caption" muted>
               No hay metas activas.
             </Typography>
           ) : (
-            goals
-              .filter((g) => g.status === "active")
-              .slice(0, 2)
+            sortedActiveGoals
+              .slice(0, 3)
               .map((goal) => (
                 <GoalCard
                   key={goal.id}
@@ -408,7 +490,6 @@ export default function DashboardScreen() {
             <>
               {recurringExpenses
                 .filter((r) => r.isActive)
-                .slice(0, 4)
                 .map((item) => {
                   const linkedAcc = accounts.find(
                     (a) => a.id === item.accountId,
@@ -425,7 +506,10 @@ export default function DashboardScreen() {
                       key={item.id}
                       onPress={() => router.push("/recurring" as any)}
                     >
-                      <Card className="flex-row items-center justify-between p-3.5">
+                      <Card
+                        variant={isIncome ? "income" : "expense"}
+                        className="flex-row items-center justify-between p-3.5"
+                      >
                         <View className="flex-row items-center gap-3 flex-1 mr-3">
                           <View
                             className="w-10 h-10 rounded-2xl items-center justify-center shrink-0"

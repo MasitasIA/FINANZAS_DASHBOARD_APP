@@ -93,8 +93,13 @@ export function RecurringAutoProcessor({ enabled }: { enabled: boolean }) {
       sub = addNotificationResponseReceivedListener(
         (response) => {
           const data = response.notification.request.content.data as
-            | { recurringId?: string; action?: string }
+            | { recurringId?: string; accountId?: string; action?: string }
             | undefined;
+
+          if (data?.action === "open_account" && data?.accountId) {
+            router.push(`/accounts/${data.accountId}` as any);
+            return;
+          }
 
           if (data?.action === "prompt_variable" && data?.recurringId) {
             const target = items.find((i) => i.id === data.recurringId);

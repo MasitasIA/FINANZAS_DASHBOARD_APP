@@ -633,6 +633,7 @@ export default function RecurringExpensesScreen() {
                   onPress={() => openEditModal(item)}
                 >
                   <Card
+                    variant={isInc ? "income" : "expense"}
                     className={`p-4 gap-3 ${!item.isActive ? "opacity-60" : ""}`}
                   >
                     {/* Fila 1: Ícono + Nombre y Cuenta + Monto */}
