@@ -1,13 +1,17 @@
-import { ActivityIndicator, FlatList, View } from "react-native";
+import { useState } from "react";
+import { ActivityIndicator, FlatList, Pressable, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Button, Typography } from "@/components/ui";
 import { GoalCard } from "@/components/goals/GoalCard";
+import { JoinWithCodeModal } from "@/components/shared/ShareModals";
 import { useGoals } from "@/hooks/useGoals";
 import { colors } from "../../tailwind.config";
 
 export default function GoalsScreen() {
   const { data, isLoading, error, refetch } = useGoals();
+  const [joinVisible, setJoinVisible] = useState(false);
   const goals = data?.data ?? [];
 
   const active = goals.filter((g) => g.status === "active");
@@ -18,11 +22,27 @@ export default function GoalsScreen() {
       {/* ── Header ─────────────────────────────────────────── */}
       <View className="flex-row items-center justify-between px-4 pt-6 pb-4">
         <Typography variant="h1">Metas</Typography>
-        <Button
-          title="Nueva meta"
-          size="sm"
-          onPress={() => router.push("/goals/new")}
-        />
+        <View className="flex-row items-center gap-2">
+          <Pressable
+            onPress={() => setJoinVisible(true)}
+            accessibilityLabel="Unirse a meta compartida con código"
+            className="flex-row items-center gap-1.5 px-3 py-2 rounded-xl bg-surface-800 border border-surface-600 active:opacity-80"
+          >
+            <MaterialCommunityIcons
+              name="account-multiple-plus"
+              size={18}
+              color={colors.primary[500]}
+            />
+            <Typography className="text-xs font-semibold text-text-primary">
+              Código
+            </Typography>
+          </Pressable>
+          <Button
+            title="Nueva meta"
+            size="sm"
+            onPress={() => router.push("/goals/new")}
+          />
+        </View>
       </View>
 
       {isLoading ? (
@@ -88,6 +108,11 @@ export default function GoalsScreen() {
           }
         />
       )}
+
+      <JoinWithCodeModal
+        visible={joinVisible}
+        onClose={() => setJoinVisible(false)}
+      />
     </SafeAreaView>
   );
 }

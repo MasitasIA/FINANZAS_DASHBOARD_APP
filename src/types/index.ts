@@ -13,6 +13,30 @@ export type TransactionType = "income" | "expense" | "transfer";
 
 export type GoalStatus = "active" | "completed" | "paused";
 
+// ─── Cuentas y Metas Compartidas ─────────────────────────────────────────────
+
+export type SharedResourceType = "account" | "goal";
+
+export interface SharedMember {
+  userId: string;
+  displayName: string;
+  role: "owner" | "editor";
+  joinedAt?: string;
+}
+
+export interface ShareInviteResponse {
+  code: string;
+  resourceType: SharedResourceType;
+  resourceId: string;
+  expiresAt: string;
+}
+
+export interface ShareJoinResponse {
+  resourceType: SharedResourceType;
+  resourceId: string;
+  resourceName: string;
+}
+
 // ─── Account ─────────────────────────────────────────────────────────────────
 
 export interface Account {
@@ -26,6 +50,9 @@ export interface Account {
   creditLimit?: number; // Límite de crédito asignado (para tarjetas)
   closingDay?: number; // Día del mes en que cierra el resumen (1-31)
   dueDay?: number; // Día del mes en que vence el pago (1-31)
+  isShared?: boolean; // Si la cuenta está compartida con otros usuarios
+  isOwner?: boolean; // Si el usuario actual es el propietario
+  members?: SharedMember[]; // Miembros con acceso a la cuenta
   createdAt: string; // ISO 8601
   updatedAt: string;
 }
@@ -45,6 +72,8 @@ export interface Category {
 
 export interface Transaction {
   id: string;
+  userId?: string;
+  authorName?: string; // Nombre del miembro que registró el movimiento en cuenta/meta compartida
   accountId: string;
   categoryId: string;
   type: TransactionType;
@@ -73,12 +102,17 @@ export interface SavingsGoal {
   icon: string;
   color: string;
   status: GoalStatus;
+  isShared?: boolean; // Si la meta está compartida con otros usuarios
+  isOwner?: boolean; // Si el usuario actual es el propietario
+  members?: SharedMember[]; // Miembros con acceso a la meta
   createdAt: string;
   updatedAt: string;
 }
 
 export interface GoalContributionPayload {
-  accountId: string;
+  accountId?: string;
+  isDirectIncome?: boolean;
+  categoryId?: string;
   amount: number;
   note?: string;
   date?: string;

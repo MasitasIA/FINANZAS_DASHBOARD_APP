@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { accountsService } from "@/services/accounts.service";
-import type { Account } from "@/types";
+import { accountsService, shareService } from "@/services/accounts.service";
+import type { Account, SharedResourceType } from "@/types";
 
 // ─── Query Keys ──────────────────────────────────────────────────────────────
 
@@ -66,6 +66,56 @@ export function useDeleteAccount() {
       qc.invalidateQueries({ queryKey: accountKeys.lists() });
       qc.invalidateQueries({ queryKey: ["transactions"] });
       qc.invalidateQueries({ queryKey: ["reports"] });
+    },
+  });
+}
+
+// ─── Hooks de Cuentas y Metas Compartidas ────────────────────────────────────
+
+export function useCreateShareInvite() {
+  return useMutation({
+    mutationFn: ({
+      resourceType,
+      resourceId,
+    }: {
+      resourceType: SharedResourceType;
+      resourceId: string;
+    }) => shareService.createInvite(resourceType, resourceId),
+  });
+}
+
+export function useJoinSharedResource() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (code: string) => shareService.join(code),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: accountKeys.all() });
+      qc.invalidateQueries({ queryKey: ["goals"] });
+      qc.invalidateQueries({ queryKey: ["transactions"] });
+    },
+  });
+}
+
+export function useLeaveSharedResource() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      resourceType,
+      resourceId,
+      targetUserId,
+    }: {
+      resourceType: SharedResourceType;
+      resourceId: string;
+      targetUserId?: string;
+    }) => shareService.leave(resourceType, resourceId, targetUserId),
+    onSuccess: (_res, { resourceType, resourceId }) => {
+      if (resourceType === "account") {
+        qc.invalidateQueries({ queryKey: accountKeys.lists() });
+        qc.invalidateQueries({ queryKey: accountKeys.detail(resourceId) });
+      } else {
+        qc.invalidateQueries({ queryKey: ["goals"] });
+      }
+      qc.invalidateQueries({ queryKey: ["transactions"] });
     },
   });
 }

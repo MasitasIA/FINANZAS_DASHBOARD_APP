@@ -90,6 +90,7 @@ export function useContributeToGoal() {
       qc.invalidateQueries({ queryKey: goalKeys.detail(id) });
       qc.invalidateQueries({ queryKey: ["accounts"] });
       qc.invalidateQueries({ queryKey: ["transactions"] });
+      qc.invalidateQueries({ queryKey: ["reports"] });
     },
   });
 }
@@ -109,6 +110,7 @@ export function useWithdrawFromGoal() {
       qc.invalidateQueries({ queryKey: goalKeys.detail(id) });
       qc.invalidateQueries({ queryKey: ["accounts"] });
       qc.invalidateQueries({ queryKey: ["transactions"] });
+      qc.invalidateQueries({ queryKey: ["reports"] });
     },
   });
 }

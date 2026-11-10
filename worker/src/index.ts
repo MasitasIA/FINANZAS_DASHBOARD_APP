@@ -204,8 +204,19 @@ async function verifyAccountOwnership(
 ): Promise<boolean> {
   if (!accountId) return false;
   const row = await db
-    .prepare("SELECT id FROM accounts WHERE id = ? AND user_id = ? LIMIT 1")
-    .bind(accountId, userId)
+    .prepare(
+      `SELECT a.id FROM accounts a
+       WHERE a.id = ?
+         AND (
+           a.user_id = ?
+           OR EXISTS (
+             SELECT 1 FROM shared_members sm
+             WHERE sm.resource_type = 'account' AND sm.resource_id = a.id AND sm.user_id = ?
+           )
+         )
+       LIMIT 1`,
+    )
+    .bind(accountId, userId, userId)
     .first();
   return Boolean(row);
 }
@@ -218,9 +229,18 @@ async function verifyGoalOwnership(
   if (!goalId) return false;
   const row = await db
     .prepare(
-      "SELECT id FROM savings_goals WHERE id = ? AND user_id = ? LIMIT 1",
+      `SELECT g.id FROM savings_goals g
+       WHERE g.id = ?
+         AND (
+           g.user_id = ?
+           OR EXISTS (
+             SELECT 1 FROM shared_members sm
+             WHERE sm.resource_type = 'goal' AND sm.resource_id = g.id AND sm.user_id = ?
+           )
+         )
+       LIMIT 1`,
     )
-    .bind(goalId, userId)
+    .bind(goalId, userId, userId)
     .first();
   return Boolean(row);
 }
@@ -267,7 +287,7 @@ async function getGoogleJwks(): Promise<any[]> {
 async function verifyFirebaseIdToken(
   token: string,
   projectId: string,
-): Promise<string | null> {
+): Promise<{ userId: string; displayName: string } | null> {
   try {
     const parts = token.split(".");
     if (parts.length !== 3) return null;
@@ -308,7 +328,16 @@ async function verifyFirebaseIdToken(
       signedData,
     );
 
-    return isValid ? payload.sub : null;
+    if (!isValid) return null;
+
+    const rawName =
+      payload.name ||
+      (typeof payload.email === "string"
+        ? payload.email.split("@")[0]
+        : "Usuario");
+    const displayName = sanitizeText(rawName, 50) || "Usuario";
+
+    return { userId: payload.sub, displayName };
   } catch {
     return null;
   }
@@ -319,11 +348,317 @@ async function verifyFirebaseIdToken(
  * se vinculan automáticamente al primer usuario real de Firebase que inicie sesión.
  */
 let legacyAlreadyClaimed = false;
+let sharedSchemaInitialized = false;
+
+async function ensureSharedSchema(db: D1DatabaseType): Promise<void> {
+  if (sharedSchemaInitialized) return;
+  try {
+    await db.batch([
+      db.prepare(
+        `CREATE TABLE IF NOT EXISTS shared_members (
+          id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          resource_type TEXT NOT NULL CHECK (resource_type IN ('account', 'goal')),
+          resource_id   TEXT NOT NULL,
+          owner_id      TEXT NOT NULL,
+          user_id       TEXT NOT NULL,
+          display_name  TEXT NOT NULL DEFAULT 'Usuario',
+          role          TEXT NOT NULL DEFAULT 'editor' CHECK (role IN ('owner', 'editor')),
+          created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(resource_type, resource_id, user_id)
+        )`,
+      ),
+      db.prepare(
+        `CREATE INDEX IF NOT EXISTS idx_shared_members_user ON shared_members(user_id, resource_type)`,
+      ),
+      db.prepare(
+        `CREATE INDEX IF NOT EXISTS idx_shared_members_resource ON shared_members(resource_type, resource_id)`,
+      ),
+      db.prepare(
+        `CREATE TABLE IF NOT EXISTS share_invites (
+          code          TEXT PRIMARY KEY,
+          resource_type TEXT NOT NULL CHECK (resource_type IN ('account', 'goal')),
+          resource_id   TEXT NOT NULL,
+          owner_id      TEXT NOT NULL,
+          owner_name    TEXT NOT NULL DEFAULT 'Propietario',
+          expires_at    TEXT NOT NULL,
+          created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )`,
+      ),
+      db.prepare(
+        `CREATE INDEX IF NOT EXISTS idx_share_invites_resource ON share_invites(resource_type, resource_id)`,
+      ),
+      db.prepare(
+        `INSERT OR IGNORE INTO accounts (id, user_id, name, type, currency, balance, color, icon)
+         VALUES ('direct-goal', 'system', 'Ingreso directo a meta', 'savings', 'ARS', 0, '#17b26a', 'piggy-bank')`,
+      ),
+    ]);
+
+    try {
+      await db
+        .prepare("ALTER TABLE transactions ADD COLUMN author_name TEXT")
+        .run();
+    } catch {
+      // Columna ya existe
+    }
+
+    await db.batch([
+      db.prepare("DROP TRIGGER IF EXISTS update_balance_after_insert"),
+      db.prepare(
+        `CREATE TRIGGER IF NOT EXISTS update_balance_after_insert
+         AFTER INSERT ON transactions
+         BEGIN
+           UPDATE accounts
+           SET balance = balance + CASE
+             WHEN NEW.type = 'income' THEN NEW.amount
+             WHEN NEW.type = 'expense' THEN -NEW.amount
+             WHEN NEW.type = 'transfer' THEN -NEW.amount
+             ELSE 0
+           END,
+           updated_at = datetime('now')
+           WHERE id = NEW.account_id
+             AND id != 'direct-goal'
+             AND (
+               user_id = NEW.user_id
+               OR EXISTS (
+                 SELECT 1 FROM shared_members sm
+                 WHERE sm.resource_type = 'account' AND sm.resource_id = accounts.id AND sm.user_id = NEW.user_id
+               )
+             );
+
+           UPDATE accounts
+           SET balance = balance + NEW.amount,
+               updated_at = datetime('now')
+           WHERE id = NEW.to_account_id
+             AND NEW.to_account_id IS NOT NULL
+             AND NEW.type = 'transfer'
+             AND (
+               user_id = NEW.user_id
+               OR EXISTS (
+                 SELECT 1 FROM shared_members sm
+                 WHERE sm.resource_type = 'account' AND sm.resource_id = accounts.id AND sm.user_id = NEW.user_id
+               )
+             );
+
+           UPDATE savings_goals
+           SET current_amount = MAX(0, current_amount + CASE
+             WHEN NEW.type IN ('expense', 'transfer') THEN NEW.amount
+             WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN NEW.amount
+             WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -NEW.amount
+             ELSE 0
+           END),
+           status = CASE
+             WHEN (current_amount + CASE
+               WHEN NEW.type IN ('expense', 'transfer') THEN NEW.amount
+               WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN NEW.amount
+               WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -NEW.amount
+               ELSE 0
+             END) >= target_amount THEN 'completed'
+             ELSE 'active'
+           END,
+           updated_at = datetime('now')
+           WHERE id = NEW.goal_id
+             AND NEW.goal_id IS NOT NULL
+             AND (
+               user_id = NEW.user_id
+               OR EXISTS (
+                 SELECT 1 FROM shared_members sm
+                 WHERE sm.resource_type = 'goal' AND sm.resource_id = savings_goals.id AND sm.user_id = NEW.user_id
+               )
+             );
+         END`,
+      ),
+      db.prepare("DROP TRIGGER IF EXISTS update_balance_after_delete"),
+      db.prepare(
+        `CREATE TRIGGER IF NOT EXISTS update_balance_after_delete
+         AFTER DELETE ON transactions
+         BEGIN
+           UPDATE accounts
+           SET balance = balance - CASE
+             WHEN OLD.type = 'income' THEN OLD.amount
+             WHEN OLD.type = 'expense' THEN -OLD.amount
+             WHEN OLD.type = 'transfer' THEN -OLD.amount
+             ELSE 0
+           END,
+           updated_at = datetime('now')
+           WHERE id = OLD.account_id
+             AND id != 'direct-goal'
+             AND (
+               user_id = OLD.user_id
+               OR EXISTS (
+                 SELECT 1 FROM shared_members sm
+                 WHERE sm.resource_type = 'account' AND sm.resource_id = accounts.id AND sm.user_id = OLD.user_id
+               )
+             );
+
+           UPDATE accounts
+           SET balance = balance - OLD.amount,
+               updated_at = datetime('now')
+           WHERE id = OLD.to_account_id
+             AND OLD.to_account_id IS NOT NULL
+             AND OLD.type = 'transfer'
+             AND (
+               user_id = OLD.user_id
+               OR EXISTS (
+                 SELECT 1 FROM shared_members sm
+                 WHERE sm.resource_type = 'account' AND sm.resource_id = accounts.id AND sm.user_id = OLD.user_id
+               )
+             );
+
+           UPDATE savings_goals
+           SET current_amount = MAX(0, current_amount - CASE
+             WHEN OLD.type IN ('expense', 'transfer') THEN OLD.amount
+             WHEN OLD.type = 'income' AND OLD.category_id != 'cat-savings' THEN OLD.amount
+             WHEN OLD.type = 'income' AND OLD.category_id = 'cat-savings' THEN -OLD.amount
+             ELSE 0
+           END),
+           status = CASE
+             WHEN (current_amount - CASE
+               WHEN OLD.type IN ('expense', 'transfer') THEN OLD.amount
+               WHEN OLD.type = 'income' AND OLD.category_id != 'cat-savings' THEN OLD.amount
+               WHEN OLD.type = 'income' AND OLD.category_id = 'cat-savings' THEN -OLD.amount
+               ELSE 0
+             END) >= target_amount THEN 'completed'
+             ELSE 'active'
+           END,
+           updated_at = datetime('now')
+           WHERE id = OLD.goal_id
+             AND OLD.goal_id IS NOT NULL
+             AND (
+               user_id = OLD.user_id
+               OR EXISTS (
+                 SELECT 1 FROM shared_members sm
+                 WHERE sm.resource_type = 'goal' AND sm.resource_id = savings_goals.id AND sm.user_id = OLD.user_id
+               )
+             );
+         END`,
+      ),
+      db.prepare("DROP TRIGGER IF EXISTS update_balance_after_update"),
+      db.prepare(
+        `CREATE TRIGGER IF NOT EXISTS update_balance_after_update
+         AFTER UPDATE ON transactions
+         BEGIN
+           UPDATE accounts
+           SET balance = balance - CASE
+             WHEN OLD.type = 'income' THEN OLD.amount
+             WHEN OLD.type = 'expense' THEN -OLD.amount
+             WHEN OLD.type = 'transfer' THEN -OLD.amount
+             ELSE 0
+           END,
+           updated_at = datetime('now')
+           WHERE id = OLD.account_id
+             AND id != 'direct-goal'
+             AND (
+               user_id = OLD.user_id
+               OR EXISTS (
+                 SELECT 1 FROM shared_members sm
+                 WHERE sm.resource_type = 'account' AND sm.resource_id = accounts.id AND sm.user_id = OLD.user_id
+               )
+             );
+
+           UPDATE accounts
+           SET balance = balance - OLD.amount,
+               updated_at = datetime('now')
+           WHERE id = OLD.to_account_id
+             AND OLD.to_account_id IS NOT NULL
+             AND OLD.type = 'transfer'
+             AND (
+               user_id = OLD.user_id
+               OR EXISTS (
+                 SELECT 1 FROM shared_members sm
+                 WHERE sm.resource_type = 'account' AND sm.resource_id = accounts.id AND sm.user_id = OLD.user_id
+               )
+             );
+
+           UPDATE savings_goals
+           SET current_amount = MAX(0, current_amount - CASE
+             WHEN OLD.type IN ('expense', 'transfer') THEN OLD.amount
+             WHEN OLD.type = 'income' AND OLD.category_id != 'cat-savings' THEN OLD.amount
+             WHEN OLD.type = 'income' AND OLD.category_id = 'cat-savings' THEN -OLD.amount
+             ELSE 0
+           END),
+           updated_at = datetime('now')
+           WHERE id = OLD.goal_id
+             AND OLD.goal_id IS NOT NULL
+             AND (
+               user_id = OLD.user_id
+               OR EXISTS (
+                 SELECT 1 FROM shared_members sm
+                 WHERE sm.resource_type = 'goal' AND sm.resource_id = savings_goals.id AND sm.user_id = OLD.user_id
+               )
+             );
+
+           UPDATE accounts
+           SET balance = balance + CASE
+             WHEN NEW.type = 'income' THEN NEW.amount
+             WHEN NEW.type = 'expense' THEN -NEW.amount
+             WHEN NEW.type = 'transfer' THEN -NEW.amount
+             ELSE 0
+           END,
+           updated_at = datetime('now')
+           WHERE id = NEW.account_id
+             AND id != 'direct-goal'
+             AND (
+               user_id = NEW.user_id
+               OR EXISTS (
+                 SELECT 1 FROM shared_members sm
+                 WHERE sm.resource_type = 'account' AND sm.resource_id = accounts.id AND sm.user_id = NEW.user_id
+               )
+             );
+
+           UPDATE accounts
+           SET balance = balance + NEW.amount,
+               updated_at = datetime('now')
+           WHERE id = NEW.to_account_id
+             AND NEW.to_account_id IS NOT NULL
+             AND NEW.type = 'transfer'
+             AND (
+               user_id = NEW.user_id
+               OR EXISTS (
+                 SELECT 1 FROM shared_members sm
+                 WHERE sm.resource_type = 'account' AND sm.resource_id = accounts.id AND sm.user_id = NEW.user_id
+               )
+             );
+
+           UPDATE savings_goals
+           SET current_amount = MAX(0, current_amount + CASE
+             WHEN NEW.type IN ('expense', 'transfer') THEN NEW.amount
+             WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN NEW.amount
+             WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -NEW.amount
+             ELSE 0
+           END),
+           status = CASE
+             WHEN (current_amount + CASE
+               WHEN NEW.type IN ('expense', 'transfer') THEN NEW.amount
+               WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN NEW.amount
+               WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -NEW.amount
+               ELSE 0
+             END) >= target_amount THEN 'completed'
+             ELSE 'active'
+           END,
+           updated_at = datetime('now')
+           WHERE id = NEW.goal_id
+             AND NEW.goal_id IS NOT NULL
+             AND (
+               user_id = NEW.user_id
+               OR EXISTS (
+                 SELECT 1 FROM shared_members sm
+                 WHERE sm.resource_type = 'goal' AND sm.resource_id = savings_goals.id AND sm.user_id = NEW.user_id
+               )
+             );
+         END`,
+      ),
+    ]);
+    sharedSchemaInitialized = true;
+  } catch {
+    // Continuar si el entorno no permite DDL
+  }
+}
 
 async function claimLegacyDataIfAny(
   db: D1DatabaseType,
   userId: string,
 ): Promise<void> {
+  await ensureSharedSchema(db);
   if (legacyAlreadyClaimed || userId === "legacy") return;
 
   const legacyCheck = await db
@@ -372,6 +707,8 @@ function toCamelCaseTransaction(row: any) {
   if (!row) return null;
   return {
     id: row.id,
+    userId: row.user_id ?? undefined,
+    authorName: row.author_name ?? undefined,
     accountId: row.account_id,
     categoryId: row.category_id,
     type: row.type,
@@ -402,6 +739,65 @@ function toCamelCaseGoal(row: any) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+async function enrichResourcesWithShared(
+  db: D1DatabaseType,
+  resourceType: "account" | "goal",
+  rows: any[],
+  currentUserId: string,
+  mapper: (r: any) => any,
+): Promise<any[]> {
+  if (!rows || rows.length === 0) return [];
+  const ids = rows.map((r) => r.id).filter(Boolean);
+  if (ids.length === 0) return [];
+
+  const placeholders = ids.map(() => "?").join(", ");
+  const membersRes = await db
+    .prepare(
+      `SELECT resource_id, user_id, display_name, role, created_at
+       FROM shared_members
+       WHERE resource_type = ? AND resource_id IN (${placeholders})
+       ORDER BY role DESC, created_at ASC`,
+    )
+    .bind(resourceType, ...ids)
+    .all();
+
+  const membersByResource = new Map<string, any[]>();
+  for (const m of (membersRes.results || []) as any[]) {
+    const list = membersByResource.get(m.resource_id) || [];
+    list.push({
+      userId: m.user_id,
+      displayName: m.display_name || "Usuario",
+      role: m.role === "owner" ? "owner" : "editor",
+      joinedAt: m.created_at,
+    });
+    membersByResource.set(m.resource_id, list);
+  }
+
+  return rows.map((row) => {
+    const base = mapper(row);
+    const members = membersByResource.get(row.id) || [];
+    const isOwner = row.user_id === currentUserId;
+    const isShared = members.length > 1 || !isOwner;
+    return {
+      ...base,
+      isOwner,
+      isShared,
+      members,
+    };
+  });
+}
+
+function generateShareInviteCode(): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = new Uint8Array(4);
+  crypto.getRandomValues(bytes);
+  let suffix = "";
+  for (let i = 0; i < 4; i++) {
+    suffix += alphabet[bytes[i] % alphabet.length];
+  }
+  return `UNPO-${suffix}`;
 }
 
 function toCamelCaseCategory(row: any) {
@@ -536,11 +932,12 @@ export default {
     }
 
     const projectId = (env.FIREBASE_PROJECT_ID || "unpo-finanzas").trim();
-    const userId = await verifyFirebaseIdToken(bearerToken, projectId);
+    const authUser = await verifyFirebaseIdToken(bearerToken, projectId);
 
-    if (!userId) {
+    if (!authUser) {
       return error("Sesión inválida o expirada", 401);
     }
+    const { userId, displayName: userDisplayName } = authUser;
 
     // ─── 3. Rate Limiting por Usuario (Lectura vs Escritura) ─────────────────
     const isWriteMethod =
@@ -571,11 +968,23 @@ export default {
       // ─── ACCOUNTS ──────────────────────────────────────────────────────────
       if (path === "/accounts" && method === "GET") {
         const rows = await env.DB.prepare(
-          "SELECT * FROM accounts WHERE user_id = ? ORDER BY created_at ASC",
+          `SELECT * FROM accounts a
+           WHERE a.user_id = ?
+              OR EXISTS (
+                SELECT 1 FROM shared_members sm
+                WHERE sm.resource_type = 'account' AND sm.resource_id = a.id AND sm.user_id = ?
+              )
+           ORDER BY a.created_at ASC`,
         )
-          .bind(userId)
+          .bind(userId, userId)
           .all();
-        const data = (rows.results || []).map(toCamelCaseAccount);
+        const data = await enrichResourcesWithShared(
+          env.DB,
+          "account",
+          (rows.results || []) as any[],
+          userId,
+          toCamelCaseAccount,
+        );
         return json({
           data,
           total: data.length,
@@ -645,22 +1054,48 @@ export default {
         )
           .bind(id, userId)
           .first();
-        return success(toCamelCaseAccount(created), 201);
+        return success(
+          {
+            ...toCamelCaseAccount(created),
+            isOwner: true,
+            isShared: false,
+            members: [],
+          },
+          201,
+        );
       }
 
       if (path.startsWith("/accounts/") && method === "GET") {
         const id = sanitizeIdentifier(path.split("/")[2]);
         const row = await env.DB.prepare(
-          "SELECT * FROM accounts WHERE id = ? AND user_id = ?",
+          `SELECT * FROM accounts a
+           WHERE a.id = ?
+             AND (
+               a.user_id = ?
+               OR EXISTS (
+                 SELECT 1 FROM shared_members sm
+                 WHERE sm.resource_type = 'account' AND sm.resource_id = a.id AND sm.user_id = ?
+               )
+             )`,
         )
-          .bind(id, userId)
+          .bind(id, userId, userId)
           .first();
         if (!row) return error("Cuenta no encontrada", 404);
-        return success(toCamelCaseAccount(row));
+        const [enriched] = await enrichResourcesWithShared(
+          env.DB,
+          "account",
+          [row],
+          userId,
+          toCamelCaseAccount,
+        );
+        return success(enriched);
       }
 
       if (path.startsWith("/accounts/") && method === "PATCH") {
         const id = sanitizeIdentifier(path.split("/")[2]);
+        const hasAccess = await verifyAccountOwnership(env.DB, id, userId);
+        if (!hasAccess) return error("Cuenta no encontrada", 404);
+
         const parsed = await parseSafeJsonBody(request);
         if (!parsed.ok) return parsed.response;
         const body = parsed.data;
@@ -726,30 +1161,43 @@ export default {
 
         if (fields.length > 0) {
           fields.push("updated_at = datetime('now')");
-          values.push(id, userId);
+          values.push(id);
           await env.DB.prepare(
-            `UPDATE accounts SET ${fields.join(", ")} WHERE id = ? AND user_id = ?`,
+            `UPDATE accounts SET ${fields.join(", ")} WHERE id = ?`,
           )
             .bind(...values)
             .run();
         }
 
         const updated = await env.DB.prepare(
-          "SELECT * FROM accounts WHERE id = ? AND user_id = ?",
+          "SELECT * FROM accounts WHERE id = ?",
         )
-          .bind(id, userId)
+          .bind(id)
           .first();
         if (!updated) return error("Cuenta no encontrada", 404);
-        return success(toCamelCaseAccount(updated));
+        const [enriched] = await enrichResourcesWithShared(
+          env.DB,
+          "account",
+          [updated],
+          userId,
+          toCamelCaseAccount,
+        );
+        return success(enriched);
       }
 
       if (path.startsWith("/accounts/") && method === "DELETE") {
         const id = sanitizeIdentifier(path.split("/")[2]);
-        await env.DB.prepare(
-          "DELETE FROM accounts WHERE id = ? AND user_id = ?",
-        )
-          .bind(id, userId)
-          .run();
+        await env.DB.batch([
+          env.DB.prepare(
+            "DELETE FROM shared_members WHERE resource_type = 'account' AND resource_id = ? AND owner_id = ?",
+          ).bind(id, userId),
+          env.DB.prepare(
+            "DELETE FROM share_invites WHERE resource_type = 'account' AND resource_id = ? AND owner_id = ?",
+          ).bind(id, userId),
+          env.DB.prepare(
+            "DELETE FROM accounts WHERE id = ? AND user_id = ?",
+          ).bind(id, userId),
+        ]);
         return success(null);
       }
 
@@ -802,18 +1250,59 @@ export default {
         );
         const offset = (page - 1) * pageSize;
 
-        const conditions: string[] = ["user_id = ?"];
-        const bindings: any[] = [userId];
+        const conditions: string[] = [];
+        const bindings: any[] = [];
 
         if (accountId) {
+          const hasAccess = await verifyAccountOwnership(
+            env.DB,
+            accountId,
+            userId,
+          );
+          if (!hasAccess) {
+            return json({
+              data: [],
+              total: 0,
+              page,
+              pageSize,
+              hasNextPage: false,
+            });
+          }
           conditions.push("(account_id = ? OR to_account_id = ?)");
           bindings.push(accountId, accountId);
+        } else if (goalId) {
+          const hasAccess = await verifyGoalOwnership(env.DB, goalId, userId);
+          if (!hasAccess) {
+            return json({
+              data: [],
+              total: 0,
+              page,
+              pageSize,
+              hasNextPage: false,
+            });
+          }
+          conditions.push("goal_id = ?");
+          bindings.push(goalId);
+        } else {
+          conditions.push(
+            `(user_id = ?
+              OR EXISTS (
+                SELECT 1 FROM shared_members sm
+                WHERE sm.resource_type = 'account' AND sm.resource_id = transactions.account_id AND sm.user_id = ?
+              )
+              OR EXISTS (
+                SELECT 1 FROM shared_members sm
+                WHERE sm.resource_type = 'goal' AND sm.resource_id = transactions.goal_id AND sm.user_id = ?
+              ))`,
+          );
+          bindings.push(userId, userId, userId);
         }
+
         if (categoryId) {
           conditions.push("category_id = ?");
           bindings.push(categoryId);
         }
-        if (goalId) {
+        if (goalId && accountId) {
           conditions.push("goal_id = ?");
           bindings.push(goalId);
         }
@@ -858,8 +1347,8 @@ export default {
         if (!parsed.ok) return parsed.response;
         const body = parsed.data;
 
-        const accountId = sanitizeIdentifier(body.accountId);
-        const categoryId = sanitizeIdentifier(body.categoryId);
+        const rawAccountId = sanitizeIdentifier(body.accountId);
+        const rawCategoryId = sanitizeIdentifier(body.categoryId);
         const toAccountId = body.toAccountId
           ? sanitizeIdentifier(body.toAccountId)
           : null;
@@ -875,20 +1364,33 @@ export default {
           return error("El monto debe ser un número positivo válido", 400);
         }
 
-        // ── RLS: Verificar que la cuenta origen pertenezca al usuario autenticado
-        const ownsOriginAccount = await verifyAccountOwnership(
-          env.DB,
-          accountId,
-          userId,
-        );
-        if (!ownsOriginAccount) {
-          return error(
-            "Acceso denegado: la cuenta origen no existe o no te pertenece",
-            403,
+        const isDirectGoalIncome =
+          Boolean(goalId) &&
+          body.type === "income" &&
+          (!rawAccountId || rawAccountId === "direct-goal");
+
+        const accountId = isDirectGoalIncome ? "direct-goal" : rawAccountId;
+        const categoryId =
+          isDirectGoalIncome && (!rawCategoryId || rawCategoryId === "cat-savings")
+            ? "cat-contribution"
+            : rawCategoryId;
+
+        if (!isDirectGoalIncome) {
+          // ── RLS: Verificar que la cuenta origen pertenezca o sea compartida con el usuario autenticado
+          const ownsOriginAccount = await verifyAccountOwnership(
+            env.DB,
+            accountId,
+            userId,
           );
+          if (!ownsOriginAccount) {
+            return error(
+              "Acceso denegado: la cuenta origen no existe o no tienes acceso",
+              403,
+            );
+          }
         }
 
-        // ── RLS: Si hay cuenta destino, verificar que también pertenezca al usuario
+        // ── RLS: Si hay cuenta destino, verificar que también pertenezca o sea compartida
         if (toAccountId) {
           const ownsDestAccount = await verifyAccountOwnership(
             env.DB,
@@ -897,18 +1399,18 @@ export default {
           );
           if (!ownsDestAccount) {
             return error(
-              "Acceso denegado: la cuenta destino no existe o no te pertenece",
+              "Acceso denegado: la cuenta destino no existe o no tienes acceso",
               403,
             );
           }
         }
 
-        // ── RLS: Si hay meta asociada, verificar que pertenezca al usuario
+        // ── RLS: Si hay meta asociada, verificar que pertenezca o sea compartida
         if (goalId) {
           const ownsGoal = await verifyGoalOwnership(env.DB, goalId, userId);
           if (!ownsGoal) {
             return error(
-              "Acceso denegado: la meta de ahorro no existe o no te pertenece",
+              "Acceso denegado: la meta de ahorro no existe o no tienes acceso",
               403,
             );
           }
@@ -922,12 +1424,13 @@ export default {
         const date = sanitizeDate(body.date);
 
         await env.DB.prepare(
-          `INSERT INTO transactions (id, user_id, account_id, category_id, type, amount, currency, description, note, date, to_account_id, goal_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO transactions (id, user_id, author_name, account_id, category_id, type, amount, currency, description, note, date, to_account_id, goal_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             id,
             userId,
+            userDisplayName,
             accountId,
             categoryId,
             body.type,
@@ -1026,11 +1529,23 @@ export default {
       // ─── GOALS ─────────────────────────────────────────────────────────────
       if (path === "/goals" && method === "GET") {
         const rows = await env.DB.prepare(
-          "SELECT * FROM savings_goals WHERE user_id = ? ORDER BY created_at ASC",
+          `SELECT * FROM savings_goals g
+           WHERE g.user_id = ?
+              OR EXISTS (
+                SELECT 1 FROM shared_members sm
+                WHERE sm.resource_type = 'goal' AND sm.resource_id = g.id AND sm.user_id = ?
+              )
+           ORDER BY g.created_at ASC`,
         )
-          .bind(userId)
+          .bind(userId, userId)
           .all();
-        const data = (rows.results || []).map(toCamelCaseGoal);
+        const data = await enrichResourcesWithShared(
+          env.DB,
+          "goal",
+          (rows.results || []) as any[],
+          userId,
+          toCamelCaseGoal,
+        );
         return json({
           data,
           total: data.length,
@@ -1091,22 +1606,48 @@ export default {
         )
           .bind(id, userId)
           .first();
-        return success(toCamelCaseGoal(created), 201);
+        return success(
+          {
+            ...toCamelCaseGoal(created),
+            isOwner: true,
+            isShared: false,
+            members: [],
+          },
+          201,
+        );
       }
 
       if (path.startsWith("/goals/") && method === "GET") {
         const id = sanitizeIdentifier(path.split("/")[2]);
         const row = await env.DB.prepare(
-          "SELECT * FROM savings_goals WHERE id = ? AND user_id = ?",
+          `SELECT * FROM savings_goals g
+           WHERE g.id = ?
+             AND (
+               g.user_id = ?
+               OR EXISTS (
+                 SELECT 1 FROM shared_members sm
+                 WHERE sm.resource_type = 'goal' AND sm.resource_id = g.id AND sm.user_id = ?
+               )
+             )`,
         )
-          .bind(id, userId)
+          .bind(id, userId, userId)
           .first();
         if (!row) return error("Meta no encontrada", 404);
-        return success(toCamelCaseGoal(row));
+        const [enriched] = await enrichResourcesWithShared(
+          env.DB,
+          "goal",
+          [row],
+          userId,
+          toCamelCaseGoal,
+        );
+        return success(enriched);
       }
 
       if (path.startsWith("/goals/") && method === "PATCH") {
         const id = sanitizeIdentifier(path.split("/")[2]);
+        const hasAccess = await verifyGoalOwnership(env.DB, id, userId);
+        if (!hasAccess) return error("Meta no encontrada", 404);
+
         const parsed = await parseSafeJsonBody(request);
         if (!parsed.ok) return parsed.response;
         const body = parsed.data;
@@ -1162,34 +1703,47 @@ export default {
 
         if (fields.length > 0) {
           fields.push("updated_at = datetime('now')");
-          values.push(id, userId);
+          values.push(id);
           await env.DB.prepare(
-            `UPDATE savings_goals SET ${fields.join(", ")} WHERE id = ? AND user_id = ?`,
+            `UPDATE savings_goals SET ${fields.join(", ")} WHERE id = ?`,
           )
             .bind(...values)
             .run();
         }
 
         const updated = await env.DB.prepare(
-          "SELECT * FROM savings_goals WHERE id = ? AND user_id = ?",
+          "SELECT * FROM savings_goals WHERE id = ?",
         )
-          .bind(id, userId)
+          .bind(id)
           .first();
         if (!updated) return error("Meta no encontrada", 404);
-        return success(toCamelCaseGoal(updated));
+        const [enriched] = await enrichResourcesWithShared(
+          env.DB,
+          "goal",
+          [updated],
+          userId,
+          toCamelCaseGoal,
+        );
+        return success(enriched);
       }
 
       if (path.startsWith("/goals/") && method === "DELETE") {
         const id = sanitizeIdentifier(path.split("/")[2]);
-        await env.DB.prepare(
-          "DELETE FROM savings_goals WHERE id = ? AND user_id = ?",
-        )
-          .bind(id, userId)
-          .run();
+        await env.DB.batch([
+          env.DB.prepare(
+            "DELETE FROM shared_members WHERE resource_type = 'goal' AND resource_id = ? AND owner_id = ?",
+          ).bind(id, userId),
+          env.DB.prepare(
+            "DELETE FROM share_invites WHERE resource_type = 'goal' AND resource_id = ? AND owner_id = ?",
+          ).bind(id, userId),
+          env.DB.prepare(
+            "DELETE FROM savings_goals WHERE id = ? AND user_id = ?",
+          ).bind(id, userId),
+        ]);
         return success(null);
       }
 
-      // Aporte a meta
+      // Aporte a meta (transferencia desde cuenta O ingreso directo a la meta)
       if (
         path.startsWith("/goals/") &&
         path.endsWith("/contribute") &&
@@ -1200,28 +1754,50 @@ export default {
         if (!parsed.ok) return parsed.response;
         const body = parsed.data;
 
-        const accountId = sanitizeIdentifier(body.accountId);
+        const rawAccountId = sanitizeIdentifier(body.accountId);
+        const isDirectIncome =
+          body.isDirectIncome === true ||
+          !rawAccountId ||
+          rawAccountId === "direct-goal";
         const amount = sanitizeAmount(body.amount, false, false);
         if (amount === null) return error("Monto de aporte inválido", 400);
 
+        const hasGoalAccess = await verifyGoalOwnership(env.DB, goalId, userId);
+        if (!hasGoalAccess) return error("Meta no encontrada", 404);
+
         const goal = await env.DB.prepare(
-          "SELECT * FROM savings_goals WHERE id = ? AND user_id = ?",
+          "SELECT * FROM savings_goals WHERE id = ?",
         )
-          .bind(goalId, userId)
+          .bind(goalId)
           .first();
         if (!goal) return error("Meta no encontrada", 404);
 
-        // ── RLS: Verificar que la cuenta origen pertenezca al mismo usuario
-        const ownsAccount = await verifyAccountOwnership(
-          env.DB,
-          accountId,
-          userId,
-        );
-        if (!ownsAccount) {
-          return error(
-            "Acceso denegado: la cuenta seleccionada no te pertenece",
-            403,
+        let effectiveAccountId = "direct-goal";
+        let effectiveType = "income";
+        let effectiveCategoryId =
+          sanitizeIdentifier(body.categoryId) || "cat-contribution";
+        if (effectiveCategoryId === "cat-savings") {
+          effectiveCategoryId = "cat-contribution";
+        }
+        let effectiveDesc = `Ingreso directo a meta: ${goal.name}`;
+
+        if (!isDirectIncome) {
+          // ── RLS: Verificar que la cuenta origen pertenezca o sea compartida con el usuario
+          const ownsAccount = await verifyAccountOwnership(
+            env.DB,
+            rawAccountId,
+            userId,
           );
+          if (!ownsAccount) {
+            return error(
+              "Acceso denegado: la cuenta seleccionada no te pertenece",
+              403,
+            );
+          }
+          effectiveAccountId = rawAccountId;
+          effectiveType = "expense";
+          effectiveCategoryId = "cat-savings";
+          effectiveDesc = `Aporte a meta: ${goal.name}`;
         }
 
         const txId = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
@@ -1230,16 +1806,19 @@ export default {
           body.note != null ? sanitizeText(body.note, 400) || null : null;
 
         await env.DB.prepare(
-          `INSERT INTO transactions (id, user_id, account_id, category_id, type, amount, currency, description, note, date, goal_id)
-           VALUES (?, ?, ?, 'cat-savings', 'expense', ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO transactions (id, user_id, author_name, account_id, category_id, type, amount, currency, description, note, date, goal_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             txId,
             userId,
-            accountId,
+            userDisplayName,
+            effectiveAccountId,
+            effectiveCategoryId,
+            effectiveType,
             amount,
             goal.currency,
-            sanitizeText(`Aporte a meta: ${goal.name}`, 160),
+            sanitizeText(effectiveDesc, 160),
             note,
             date,
             goalId,
@@ -1247,10 +1826,17 @@ export default {
           .run();
 
         const updatedGoal = await env.DB.prepare(
-          "SELECT * FROM savings_goals WHERE id = ? AND user_id = ?",
+          "SELECT * FROM savings_goals WHERE id = ?",
         )
-          .bind(goalId, userId)
+          .bind(goalId)
           .first();
+        const [enrichedGoal] = await enrichResourcesWithShared(
+          env.DB,
+          "goal",
+          updatedGoal ? [updatedGoal] : [],
+          userId,
+          toCamelCaseGoal,
+        );
         const createdTx = await env.DB.prepare(
           "SELECT * FROM transactions WHERE id = ? AND user_id = ?",
         )
@@ -1258,7 +1844,7 @@ export default {
           .first();
 
         return success({
-          goal: toCamelCaseGoal(updatedGoal),
+          goal: enrichedGoal,
           transaction: toCamelCaseTransaction(createdTx),
         });
       }
@@ -1278,14 +1864,17 @@ export default {
         const amount = sanitizeAmount(body.amount, false, false);
         if (amount === null) return error("Monto de retiro inválido", 400);
 
+        const hasGoalAccess = await verifyGoalOwnership(env.DB, goalId, userId);
+        if (!hasGoalAccess) return error("Meta no encontrada", 404);
+
         const goal = await env.DB.prepare(
-          "SELECT * FROM savings_goals WHERE id = ? AND user_id = ?",
+          "SELECT * FROM savings_goals WHERE id = ?",
         )
-          .bind(goalId, userId)
+          .bind(goalId)
           .first();
         if (!goal) return error("Meta no encontrada", 404);
 
-        // ── RLS: Verificar que la cuenta destino pertenezca al mismo usuario
+        // ── RLS: Verificar que la cuenta destino pertenezca o sea compartida con el usuario
         const ownsAccount = await verifyAccountOwnership(
           env.DB,
           accountId,
@@ -1304,12 +1893,13 @@ export default {
           body.note != null ? sanitizeText(body.note, 400) || null : null;
 
         await env.DB.prepare(
-          `INSERT INTO transactions (id, user_id, account_id, category_id, type, amount, currency, description, note, date, goal_id)
-           VALUES (?, ?, ?, 'cat-savings', 'income', ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO transactions (id, user_id, author_name, account_id, category_id, type, amount, currency, description, note, date, goal_id)
+           VALUES (?, ?, ?, ?, 'cat-savings', 'income', ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             txId,
             userId,
+            userDisplayName,
             accountId,
             amount,
             goal.currency,
@@ -1321,10 +1911,17 @@ export default {
           .run();
 
         const updatedGoal = await env.DB.prepare(
-          "SELECT * FROM savings_goals WHERE id = ? AND user_id = ?",
+          "SELECT * FROM savings_goals WHERE id = ?",
         )
-          .bind(goalId, userId)
+          .bind(goalId)
           .first();
+        const [enrichedGoal] = await enrichResourcesWithShared(
+          env.DB,
+          "goal",
+          updatedGoal ? [updatedGoal] : [],
+          userId,
+          toCamelCaseGoal,
+        );
         const createdTx = await env.DB.prepare(
           "SELECT * FROM transactions WHERE id = ? AND user_id = ?",
         )
@@ -1332,9 +1929,240 @@ export default {
           .first();
 
         return success({
-          goal: toCamelCaseGoal(updatedGoal),
+          goal: enrichedGoal,
           transaction: toCamelCaseTransaction(createdTx),
         });
+      }
+
+      // ─── CUENTAS Y METAS COMPARTIDAS (Códigos de Invitación UNPO-XXXX) ─────
+      if (path === "/share/invite" && method === "POST") {
+        const parsed = await parseSafeJsonBody(request);
+        if (!parsed.ok) return parsed.response;
+        const body = parsed.data;
+
+        const resourceType =
+          body.resourceType === "goal" ? "goal" : "account";
+        const resourceId = sanitizeIdentifier(body.resourceId);
+        if (!resourceId) return error("ID de recurso inválido", 400);
+
+        const tableName =
+          resourceType === "goal" ? "savings_goals" : "accounts";
+        const resourceRow = await env.DB.prepare(
+          `SELECT id, name, user_id FROM ${tableName} WHERE id = ? AND user_id = ?`,
+        )
+          .bind(resourceId, userId)
+          .first();
+
+        if (!resourceRow) {
+          return error(
+            "Solo el propietario puede generar códigos de invitación",
+            403,
+          );
+        }
+
+        // Limpiar invitaciones vencidas de este recurso y reutilizar si ya hay una activa
+        const nowIso = new Date().toISOString();
+        await env.DB.prepare(
+          "DELETE FROM share_invites WHERE resource_type = ? AND resource_id = ? AND expires_at <= ?",
+        )
+          .bind(resourceType, resourceId, nowIso)
+          .run();
+
+        const existingInvite = await env.DB.prepare(
+          "SELECT code, expires_at FROM share_invites WHERE resource_type = ? AND resource_id = ? AND owner_id = ? AND expires_at > ? LIMIT 1",
+        )
+          .bind(resourceType, resourceId, userId, nowIso)
+          .first();
+
+        if (existingInvite) {
+          return success({
+            code: String(existingInvite.code),
+            resourceType,
+            resourceId,
+            expiresAt: String(existingInvite.expires_at),
+          });
+        }
+
+        const code = generateShareInviteCode();
+        const expiresAt = new Date(
+          Date.now() + 24 * 60 * 60 * 1000,
+        ).toISOString();
+
+        await env.DB.prepare(
+          `INSERT OR REPLACE INTO share_invites (code, resource_type, resource_id, owner_id, owner_name, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+          .bind(
+            code,
+            resourceType,
+            resourceId,
+            userId,
+            userDisplayName,
+            expiresAt,
+          )
+          .run();
+
+        return success(
+          {
+            code,
+            resourceType,
+            resourceId,
+            expiresAt,
+          },
+          201,
+        );
+      }
+
+      if (path === "/share/join" && method === "POST") {
+        const parsed = await parseSafeJsonBody(request);
+        if (!parsed.ok) return parsed.response;
+        const rawCode = String(parsed.data?.code || "")
+          .trim()
+          .toUpperCase();
+        const cleanCode = rawCode.replace(/[^A-Z0-9-]/g, "").slice(0, 12);
+        if (!cleanCode) {
+          return error("Ingresa un código de invitación válido", 400);
+        }
+
+        const normalizedCode = cleanCode.startsWith("UNPO-")
+          ? cleanCode
+          : cleanCode.length === 4
+            ? `UNPO-${cleanCode}`
+            : cleanCode;
+
+        const invite = await env.DB.prepare(
+          "SELECT * FROM share_invites WHERE code = ? LIMIT 1",
+        )
+          .bind(normalizedCode)
+          .first();
+
+        if (!invite) {
+          return error("El código de invitación no existe o ya fue utilizado", 404);
+        }
+
+        const nowIso = new Date().toISOString();
+        if (String(invite.expires_at) <= nowIso) {
+          return error(
+            "El código de invitación ha expirado. Pídele uno nuevo al propietario.",
+            410,
+          );
+        }
+
+        const resourceType =
+          invite.resource_type === "goal" ? "goal" : "account";
+        const resourceId = String(invite.resource_id);
+        const ownerId = String(invite.owner_id);
+        const ownerName = String(invite.owner_name || "Propietario");
+
+        if (ownerId === userId) {
+          return error("Ya eres el propietario de este recurso", 400);
+        }
+
+        const tableName =
+          resourceType === "goal" ? "savings_goals" : "accounts";
+        const resourceRow = await env.DB.prepare(
+          `SELECT id, name FROM ${tableName} WHERE id = ?`,
+        )
+          .bind(resourceId)
+          .first();
+
+        if (!resourceRow) {
+          return error("La cuenta o meta compartida ya no existe", 404);
+        }
+
+        const ownerMemberId = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+        const editorMemberId = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+
+        await env.DB.batch([
+          env.DB.prepare(
+            `INSERT INTO shared_members (id, resource_type, resource_id, owner_id, user_id, display_name, role)
+             VALUES (?, ?, ?, ?, ?, ?, 'owner')
+             ON CONFLICT(resource_type, resource_id, user_id) DO UPDATE SET
+               display_name = excluded.display_name,
+               role = 'owner'`,
+          ).bind(
+            ownerMemberId,
+            resourceType,
+            resourceId,
+            ownerId,
+            ownerId,
+            ownerName,
+          ),
+          env.DB.prepare(
+            `INSERT INTO shared_members (id, resource_type, resource_id, owner_id, user_id, display_name, role)
+             VALUES (?, ?, ?, ?, ?, ?, 'editor')
+             ON CONFLICT(resource_type, resource_id, user_id) DO UPDATE SET
+               display_name = excluded.display_name`,
+          ).bind(
+            editorMemberId,
+            resourceType,
+            resourceId,
+            ownerId,
+            userId,
+            userDisplayName,
+          ),
+        ]);
+
+        return success({
+          resourceType,
+          resourceId,
+          resourceName: String(resourceRow.name),
+        });
+      }
+
+      if (path === "/share/leave" && method === "POST") {
+        const parsed = await parseSafeJsonBody(request);
+        if (!parsed.ok) return parsed.response;
+        const body = parsed.data;
+
+        const resourceType =
+          body.resourceType === "goal" ? "goal" : "account";
+        const resourceId = sanitizeIdentifier(body.resourceId);
+        const targetUserId = body.targetUserId
+          ? String(body.targetUserId).trim()
+          : userId;
+
+        if (!resourceId) return error("ID de recurso inválido", 400);
+
+        if (targetUserId !== userId) {
+          // El propietario está eliminando a un miembro
+          const tableName =
+            resourceType === "goal" ? "savings_goals" : "accounts";
+          const isOwner = await env.DB.prepare(
+            `SELECT id FROM ${tableName} WHERE id = ? AND user_id = ?`,
+          )
+            .bind(resourceId, userId)
+            .first();
+          if (!isOwner) {
+            return error(
+              "Solo el propietario puede quitar miembros",
+              403,
+            );
+          }
+        }
+
+        await env.DB.prepare(
+          "DELETE FROM shared_members WHERE resource_type = ? AND resource_id = ? AND user_id = ? AND role != 'owner'",
+        )
+          .bind(resourceType, resourceId, targetUserId)
+          .run();
+
+        // Si ya no quedan editores invitados, limpiar también la fila del owner para que vuelva a ser privada
+        const remainingEditors = await env.DB.prepare(
+          "SELECT COUNT(*) as count FROM shared_members WHERE resource_type = ? AND resource_id = ? AND role = 'editor'",
+        )
+          .bind(resourceType, resourceId)
+          .first();
+
+        if (!remainingEditors || Number(remainingEditors.count || 0) === 0) {
+          await env.DB.prepare(
+            "DELETE FROM shared_members WHERE resource_type = ? AND resource_id = ?",
+          )
+            .bind(resourceType, resourceId)
+            .run();
+        }
+
+        return success(null);
       }
 
       // ─── REPORTS ───────────────────────────────────────────────────────────
@@ -1351,11 +2179,15 @@ export default {
         const month = Math.min(12, Math.max(1, rawMonth || new Date().getMonth() + 1));
         const monthPattern = `${year}-${String(month).padStart(2, "0")}%`;
 
+        // Incluye transacciones normales + ingresos directos a metas que NO sean transferencias ('cat-savings')
         const txRows = await env.DB.prepare(
           `SELECT t.*, c.name as cat_name, c.color as cat_color, c.icon as cat_icon
            FROM transactions t
            LEFT JOIN categories c ON t.category_id = c.id
-           WHERE t.user_id = ? AND t.date LIKE ? AND t.goal_id IS NULL AND (t.category_id != 'cat-savings' OR t.category_id IS NULL)`,
+           WHERE t.user_id = ?
+             AND t.date LIKE ?
+             AND (t.category_id != 'cat-savings' OR t.category_id IS NULL)
+             AND (t.goal_id IS NULL OR (t.type = 'income' AND t.category_id != 'cat-savings'))`,
         )
           .bind(userId, monthPattern)
           .all();
@@ -1367,7 +2199,8 @@ export default {
         const incMap = new Map<string, any>();
 
         for (const tx of txs) {
-          if (tx.goal_id || tx.category_id === "cat-savings") continue;
+          if (tx.category_id === "cat-savings") continue;
+          if (tx.goal_id && tx.type !== "income") continue;
 
           if (tx.type === "income") {
             totalIncome += tx.amount;
@@ -1432,11 +2265,15 @@ export default {
         const year = Math.min(2100, Math.max(2000, rawYear || new Date().getFullYear()));
         const yearPattern = `${year}%`;
 
+        // Incluye transacciones normales + ingresos directos a metas que NO sean transferencias ('cat-savings')
         const txRows = await env.DB.prepare(
           `SELECT t.*, c.name as cat_name, c.color as cat_color, c.icon as cat_icon
            FROM transactions t
            LEFT JOIN categories c ON t.category_id = c.id
-           WHERE t.user_id = ? AND t.date LIKE ? AND t.goal_id IS NULL AND (t.category_id != 'cat-savings' OR t.category_id IS NULL)`,
+           WHERE t.user_id = ?
+             AND t.date LIKE ?
+             AND (t.category_id != 'cat-savings' OR t.category_id IS NULL)
+             AND (t.goal_id IS NULL OR (t.type = 'income' AND t.category_id != 'cat-savings'))`,
         )
           .bind(userId, yearPattern)
           .all();
@@ -1448,7 +2285,8 @@ export default {
         const incMap = new Map<string, any>();
 
         for (const tx of txs) {
-          if (tx.goal_id || tx.category_id === "cat-savings") continue;
+          if (tx.category_id === "cat-savings") continue;
+          if (tx.goal_id && tx.type !== "income") continue;
 
           if (tx.type === "income") {
             totalIncome += tx.amount;
@@ -1515,7 +2353,8 @@ export default {
           let inc = 0;
           let exp = 0;
           for (const tx of txs) {
-            if (tx.goal_id || tx.category_id === "cat-savings") continue;
+            if (tx.category_id === "cat-savings") continue;
+            if (tx.goal_id && tx.type !== "income") continue;
             if (tx.date && tx.date.startsWith(mPrefix)) {
               if (tx.type === "income") inc += tx.amount;
               else if (tx.type === "expense") exp += tx.amount;

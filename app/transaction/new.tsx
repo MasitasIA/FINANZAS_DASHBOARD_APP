@@ -14,6 +14,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Button, Card, Typography } from "@/components/ui";
 import { useCreateTransaction } from "@/hooks/useTransactions";
 import { useAccounts } from "@/hooks/useAccounts";
+import { useGoals } from "@/hooks/useGoals";
 import { useCategories } from "@/hooks/useCategories";
 import type { TransactionType, Currency } from "@/types";
 import { colors } from "../../tailwind.config";
@@ -34,6 +35,7 @@ export default function NewTransactionScreen() {
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(
     params.accountId ?? null,
   );
+  const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
   const [selectedToAccountId, setSelectedToAccountId] = useState<string | null>(
     params.toAccountId ?? null,
   );
@@ -41,11 +43,18 @@ export default function NewTransactionScreen() {
   const { data: accountsData } = useAccounts();
   const accounts = accountsData?.data ?? [];
 
+  const { data: goalsData } = useGoals();
+  const activeGoals = (goalsData?.data ?? []).filter(
+    (g) => g.status === "active",
+  );
+
   const { data: categoriesData, isLoading: loadingCategories } =
     useCategories();
   const allCategories = categoriesData?.data ?? [];
 
   const isTransfer = type === "transfer";
+  const isDirectGoalIncome = type === "income" && Boolean(selectedGoalId);
+  const selectedGoal = activeGoals.find((g) => g.id === selectedGoalId);
 
   // Origen sugerido
   const defaultOrigin =
@@ -54,11 +63,15 @@ export default function NewTransactionScreen() {
         a.id !== (selectedToAccountId ?? params.toAccountId) &&
         a.type !== "credit",
     ) ?? accounts[0];
-  const activeAccountId = selectedAccountId ?? defaultOrigin?.id ?? null;
+  const activeAccountId = isDirectGoalIncome
+    ? "direct-goal"
+    : (selectedAccountId ?? defaultOrigin?.id ?? null);
 
-  // Moneda de la cuenta seleccionada
+  // Moneda de la cuenta o meta seleccionada
   const originAccount = accounts.find((a) => a.id === activeAccountId);
-  const activeCurrency: Currency = originAccount?.currency ?? "ARS";
+  const activeCurrency: Currency = isDirectGoalIncome
+    ? (selectedGoal?.currency ?? "ARS")
+    : (originAccount?.currency ?? "ARS");
 
   // Destino sugerido para transferencia
   const defaultDestination = accounts.find((a) => a.id !== activeAccountId);
@@ -68,14 +81,21 @@ export default function NewTransactionScreen() {
   const { mutate, isPending } = useCreateTransaction();
 
   const toAccount = accounts.find((a) => a.id === activeToAccountId);
-  const currentCategories = allCategories.filter((c) => c.type === type);
+  const currentCategories = allCategories.filter(
+    (c) => c.type === type && c.id !== "cat-savings",
+  );
   const selectedCat =
     currentCategories.find((c) => c.id === selectedCategoryId) ??
     currentCategories[0];
 
   const handleTypeChange = (newType: TransactionType) => {
     setType(newType);
-    const firstCat = allCategories.find((c) => c.type === newType);
+    if (newType !== "income") {
+      setSelectedGoalId(null);
+    }
+    const firstCat = allCategories.find(
+      (c) => c.type === newType && c.id !== "cat-savings",
+    );
     setSelectedCategoryId(firstCat?.id ?? null);
   };
 
@@ -84,7 +104,7 @@ export default function NewTransactionScreen() {
     !amount ||
     isNaN(parsedAmount) ||
     parsedAmount <= 0 ||
-    !activeAccountId ||
+    (!activeAccountId && !isDirectGoalIncome) ||
     !selectedCat ||
     (isTransfer &&
       (!activeToAccountId || activeToAccountId === activeAccountId));
@@ -95,9 +115,13 @@ export default function NewTransactionScreen() {
     const categoryName =
       selectedCat.name ?? (isTransfer ? "Transferencia" : "Transacción");
     const trimmedDetail = detail.trim();
-    const finalDescription = trimmedDetail
-      ? `${categoryName} - ${trimmedDetail}`
-      : categoryName;
+    const finalDescription = isDirectGoalIncome && selectedGoal
+      ? trimmedDetail
+        ? `${categoryName} - ${trimmedDetail} (Meta: ${selectedGoal.name})`
+        : `Ingreso directo a meta: ${selectedGoal.name}`
+      : trimmedDetail
+        ? `${categoryName} - ${trimmedDetail}`
+        : categoryName;
 
     mutate(
       {
@@ -105,7 +129,8 @@ export default function NewTransactionScreen() {
         amount: parsedAmount,
         description: finalDescription,
         note: trimmedDetail || undefined,
-        accountId: activeAccountId,
+        accountId: isDirectGoalIncome ? "direct-goal" : activeAccountId,
+        goalId: isDirectGoalIncome && selectedGoal ? selectedGoal.id : undefined,
         toAccountId: isTransfer ? (activeToAccountId ?? undefined) : undefined,
         categoryId: selectedCat.id,
         currency: activeCurrency,
@@ -348,48 +373,98 @@ export default function NewTransactionScreen() {
               </View>
             </View>
           ) : (
-            <View className="gap-2">
-              <Typography variant="label">Cuenta</Typography>
-              {accounts.map((acc) => {
-                const isSelected = activeAccountId === acc.id;
-                return (
-                  <Pressable
-                    key={acc.id}
-                    onPress={() => setSelectedAccountId(acc.id)}
-                    className={`flex-row items-center justify-between px-4 py-3 rounded-2xl ${
-                      isSelected
-                        ? "bg-primary-600"
-                        : "bg-surface-800 border border-surface-600/70"
-                    }`}
-                  >
-                    <Typography
-                      className={isSelected ? "text-white font-medium" : ""}
+            <View className="gap-4">
+              <View className="gap-2">
+                <Typography variant="label">Cuenta</Typography>
+                {accounts.map((acc) => {
+                  const isSelected =
+                    !isDirectGoalIncome && activeAccountId === acc.id;
+                  return (
+                    <Pressable
+                      key={acc.id}
+                      onPress={() => {
+                        setSelectedGoalId(null);
+                        setSelectedAccountId(acc.id);
+                      }}
+                      className={`flex-row items-center justify-between px-4 py-3 rounded-2xl ${
+                        isSelected
+                          ? "bg-primary-600"
+                          : "bg-surface-800 border border-surface-600/70"
+                      }`}
                     >
-                      {acc.name}
+                      <Typography
+                        className={isSelected ? "text-white font-medium" : ""}
+                      >
+                        {acc.name}
+                      </Typography>
+                      <Typography
+                        variant="caption"
+                        className={isSelected ? "text-white/80" : ""}
+                        muted={!isSelected}
+                      >
+                        {acc.type === "credit"
+                          ? "Tarjeta de crédito"
+                          : acc.currency}
+                      </Typography>
+                    </Pressable>
+                  );
+                })}
+                {accounts.length === 0 && (
+                  <View className="items-start gap-2 pt-1">
+                    <Typography variant="caption" muted>
+                      Aún no tienes cuentas registradas.
                     </Typography>
-                    <Typography
-                      variant="caption"
-                      className={isSelected ? "text-white/80" : ""}
-                      muted={!isSelected}
-                    >
-                      {acc.type === "credit"
-                        ? "Tarjeta de crédito"
-                        : acc.currency}
-                    </Typography>
-                  </Pressable>
-                );
-              })}
-              {accounts.length === 0 && (
-                <View className="items-start gap-2 pt-1">
-                  <Typography variant="caption" muted>
-                    Aún no tienes cuentas registradas.
+                    <Button
+                      title="Crear cuenta"
+                      size="sm"
+                      variant="secondary"
+                      onPress={() => router.push("/accounts/new")}
+                    />
+                  </View>
+                )}
+              </View>
+
+              {type === "income" && activeGoals.length > 0 && (
+                <View className="gap-2">
+                  <Typography variant="label">
+                    O ingresar directo a una Meta de Ahorro (suma en reportes)
                   </Typography>
-                  <Button
-                    title="Crear cuenta"
-                    size="sm"
-                    variant="secondary"
-                    onPress={() => router.push("/accounts/new")}
-                  />
+                  {activeGoals.map((goal) => {
+                    const isSelected = selectedGoalId === goal.id;
+                    return (
+                      <Pressable
+                        key={goal.id}
+                        onPress={() => setSelectedGoalId(goal.id)}
+                        className={`flex-row items-center justify-between px-4 py-3 rounded-2xl ${
+                          isSelected
+                            ? "bg-success-500"
+                            : "bg-surface-800 border border-surface-600/70"
+                        }`}
+                      >
+                        <View className="flex-row items-center gap-2">
+                          <MaterialCommunityIcons
+                            name={(goal.icon as any) || "piggy-bank"}
+                            size={18}
+                            color={isSelected ? colors.white : goal.color}
+                          />
+                          <Typography
+                            className={
+                              isSelected ? "text-white font-medium" : ""
+                            }
+                          >
+                            {goal.name}
+                          </Typography>
+                        </View>
+                        <Typography
+                          variant="caption"
+                          className={isSelected ? "text-white/80" : ""}
+                          muted={!isSelected}
+                        >
+                          Meta ({goal.currency})
+                        </Typography>
+                      </Pressable>
+                    );
+                  })}
                 </View>
               )}
             </View>

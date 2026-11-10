@@ -58,6 +58,7 @@ INSERT OR IGNORE INTO categories (id, name, icon, color, type, is_default) VALUE
 CREATE TABLE IF NOT EXISTS transactions (
   id            TEXT    PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   user_id       TEXT    NOT NULL DEFAULT 'legacy',
+  author_name   TEXT,
   account_id    TEXT    NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   category_id   TEXT    NOT NULL REFERENCES categories(id),
   type          TEXT    NOT NULL CHECK (type IN ('income','expense','transfer')),
@@ -127,14 +128,46 @@ CREATE TABLE IF NOT EXISTS user_settings (
   updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- ── Triggers: actualizar balance en cuentas y metas (con aislamiento RLS por user_id) ──
+-- ── Cuentas y Metas Compartidas (Miembros e Invitaciones) ─────────────────────
+CREATE TABLE IF NOT EXISTS shared_members (
+  id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  resource_type TEXT NOT NULL CHECK (resource_type IN ('account', 'goal')),
+  resource_id   TEXT NOT NULL,
+  owner_id      TEXT NOT NULL,
+  user_id       TEXT NOT NULL,
+  display_name  TEXT NOT NULL DEFAULT 'Usuario',
+  role          TEXT NOT NULL DEFAULT 'editor' CHECK (role IN ('owner', 'editor')),
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(resource_type, resource_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shared_members_user     ON shared_members(user_id, resource_type);
+CREATE INDEX IF NOT EXISTS idx_shared_members_resource ON shared_members(resource_type, resource_id);
+
+CREATE TABLE IF NOT EXISTS share_invites (
+  code          TEXT PRIMARY KEY,
+  resource_type TEXT NOT NULL CHECK (resource_type IN ('account', 'goal')),
+  resource_id   TEXT NOT NULL,
+  owner_id      TEXT NOT NULL,
+  owner_name    TEXT NOT NULL DEFAULT 'Propietario',
+  expires_at    TEXT NOT NULL,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_share_invites_resource ON share_invites(resource_type, resource_id);
+
+-- ── Cuenta técnica del sistema para ingresos directos a metas ─────────────────
+INSERT OR IGNORE INTO accounts (id, user_id, name, type, currency, balance, color, icon)
+VALUES ('direct-goal', 'system', 'Ingreso directo a meta', 'savings', 'ARS', 0, '#17b26a', 'piggy-bank');
+
+-- ── Triggers: actualizar balance en cuentas y metas (con soporte para recursos compartidos e ingresos directos a metas) ──
 
 -- 1. Al insertar transacción
 DROP TRIGGER IF EXISTS update_balance_after_insert;
 CREATE TRIGGER IF NOT EXISTS update_balance_after_insert
 AFTER INSERT ON transactions
 BEGIN
-  -- Actualiza balance en cuenta origen (solo si pertenece al mismo user_id)
+  -- Actualiza balance en cuenta origen (si pertenece al usuario o es miembro compartido, ignorando ingresos directos a metas)
   UPDATE accounts
   SET    balance    = balance + CASE
                                   WHEN NEW.type = 'income'   THEN NEW.amount
@@ -143,34 +176,64 @@ BEGIN
                                   ELSE 0
                                 END,
          updated_at = datetime('now')
-  WHERE  id = NEW.account_id AND user_id = NEW.user_id;
+  WHERE  id = NEW.account_id
+    AND  id != 'direct-goal'
+    AND  (
+      user_id = NEW.user_id
+      OR EXISTS (
+        SELECT 1 FROM shared_members sm
+        WHERE sm.resource_type = 'account' AND sm.resource_id = accounts.id AND sm.user_id = NEW.user_id
+      )
+    );
 
-  -- Si es transferencia, acredita en la cuenta destino (solo si pertenece al mismo user_id)
+  -- Si es transferencia, acredita en la cuenta destino (si pertenece al usuario o es miembro compartido)
   UPDATE accounts
   SET    balance    = balance + NEW.amount,
          updated_at = datetime('now')
-  WHERE  id = NEW.to_account_id AND user_id = NEW.user_id AND NEW.to_account_id IS NOT NULL AND NEW.type = 'transfer';
+  WHERE  id = NEW.to_account_id
+    AND  NEW.to_account_id IS NOT NULL
+    AND  NEW.type = 'transfer'
+    AND  (
+      user_id = NEW.user_id
+      OR EXISTS (
+        SELECT 1 FROM shared_members sm
+        WHERE sm.resource_type = 'account' AND sm.resource_id = accounts.id AND sm.user_id = NEW.user_id
+      )
+    );
 
-  -- Si está vinculada a una meta de ahorro (solo si pertenece al mismo user_id)
+  -- Si está vinculada a una meta de ahorro:
+  -- • Aporte desde cuenta (type IN ('expense', 'transfer')) -> suma a la meta (+NEW.amount)
+  -- • Ingreso directo a meta (type = 'income' AND category_id != 'cat-savings') -> suma a la meta (+NEW.amount)
+  -- • Retiro desde meta hacia cuenta (type = 'income' AND category_id = 'cat-savings') -> resta de la meta (-NEW.amount)
   UPDATE savings_goals
   SET    current_amount = MAX(0, current_amount + CASE
                                                     WHEN NEW.type IN ('expense', 'transfer') THEN NEW.amount
-                                                    WHEN NEW.type = 'income' THEN -NEW.amount
+                                                    WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN NEW.amount
+                                                    WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -NEW.amount
                                                     ELSE 0
                                                   END),
          status         = CASE
                             WHEN (current_amount + CASE
                                                     WHEN NEW.type IN ('expense', 'transfer') THEN NEW.amount
-                                                    WHEN NEW.type = 'income' THEN -NEW.amount
+                                                    WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN NEW.amount
+                                                    WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -NEW.amount
                                                     ELSE 0
                                                   END) >= target_amount THEN 'completed'
                             ELSE 'active'
                           END,
          updated_at     = datetime('now')
-  WHERE  id = NEW.goal_id AND user_id = NEW.user_id AND NEW.goal_id IS NOT NULL;
+  WHERE  id = NEW.goal_id
+    AND  NEW.goal_id IS NOT NULL
+    AND  (
+      user_id = NEW.user_id
+      OR EXISTS (
+        SELECT 1 FROM shared_members sm
+        WHERE sm.resource_type = 'goal' AND sm.resource_id = savings_goals.id AND sm.user_id = NEW.user_id
+      )
+    );
 END;
 
--- 2. Al eliminar transacción (reversión de saldos con aislamiento RLS)
+-- 2. Al eliminar transacción (reversión de saldos con soporte para recursos compartidos e ingresos directos a metas)
 DROP TRIGGER IF EXISTS update_balance_after_delete;
 CREATE TRIGGER IF NOT EXISTS update_balance_after_delete
 AFTER DELETE ON transactions
@@ -184,34 +247,61 @@ BEGIN
                                   ELSE 0
                                 END,
          updated_at = datetime('now')
-  WHERE  id = OLD.account_id AND user_id = OLD.user_id;
+  WHERE  id = OLD.account_id
+    AND  id != 'direct-goal'
+    AND  (
+      user_id = OLD.user_id
+      OR EXISTS (
+        SELECT 1 FROM shared_members sm
+        WHERE sm.resource_type = 'account' AND sm.resource_id = accounts.id AND sm.user_id = OLD.user_id
+      )
+    );
 
   -- Si era transferencia, descuenta de la cuenta destino
   UPDATE accounts
   SET    balance    = balance - OLD.amount,
          updated_at = datetime('now')
-  WHERE  id = OLD.to_account_id AND user_id = OLD.user_id AND OLD.to_account_id IS NOT NULL AND OLD.type = 'transfer';
+  WHERE  id = OLD.to_account_id
+    AND  OLD.to_account_id IS NOT NULL
+    AND  OLD.type = 'transfer'
+    AND  (
+      user_id = OLD.user_id
+      OR EXISTS (
+        SELECT 1 FROM shared_members sm
+        WHERE sm.resource_type = 'account' AND sm.resource_id = accounts.id AND sm.user_id = OLD.user_id
+      )
+    );
 
   -- Si estaba vinculada a una meta, revierte el impacto en la meta
   UPDATE savings_goals
   SET    current_amount = MAX(0, current_amount - CASE
                                                     WHEN OLD.type IN ('expense', 'transfer') THEN OLD.amount
-                                                    WHEN OLD.type = 'income' THEN -OLD.amount
+                                                    WHEN OLD.type = 'income' AND OLD.category_id != 'cat-savings' THEN OLD.amount
+                                                    WHEN OLD.type = 'income' AND OLD.category_id = 'cat-savings' THEN -OLD.amount
                                                     ELSE 0
                                                   END),
          status         = CASE
                             WHEN (current_amount - CASE
                                                     WHEN OLD.type IN ('expense', 'transfer') THEN OLD.amount
-                                                    WHEN OLD.type = 'income' THEN -OLD.amount
+                                                    WHEN OLD.type = 'income' AND OLD.category_id != 'cat-savings' THEN OLD.amount
+                                                    WHEN OLD.type = 'income' AND OLD.category_id = 'cat-savings' THEN -OLD.amount
                                                     ELSE 0
                                                   END) >= target_amount THEN 'completed'
                             ELSE 'active'
                           END,
          updated_at     = datetime('now')
-  WHERE  id = OLD.goal_id AND user_id = OLD.user_id AND OLD.goal_id IS NOT NULL;
+  WHERE  id = OLD.goal_id
+    AND  OLD.goal_id IS NOT NULL
+    AND  (
+      user_id = OLD.user_id
+      OR EXISTS (
+        SELECT 1 FROM shared_members sm
+        WHERE sm.resource_type = 'goal' AND sm.resource_id = savings_goals.id AND sm.user_id = OLD.user_id
+      )
+    );
 END;
 
--- 3. Al actualizar transacción (con aislamiento RLS)
+-- 3. Al actualizar transacción (con soporte para recursos compartidos e ingresos directos a metas)
 DROP TRIGGER IF EXISTS update_balance_after_update;
 CREATE TRIGGER IF NOT EXISTS update_balance_after_update
 AFTER UPDATE ON transactions
@@ -225,21 +315,47 @@ BEGIN
                                   ELSE 0
                                 END,
          updated_at = datetime('now')
-  WHERE  id = OLD.account_id AND user_id = OLD.user_id;
+  WHERE  id = OLD.account_id
+    AND  id != 'direct-goal'
+    AND  (
+      user_id = OLD.user_id
+      OR EXISTS (
+        SELECT 1 FROM shared_members sm
+        WHERE sm.resource_type = 'account' AND sm.resource_id = accounts.id AND sm.user_id = OLD.user_id
+      )
+    );
 
   UPDATE accounts
   SET    balance    = balance - OLD.amount,
          updated_at = datetime('now')
-  WHERE  id = OLD.to_account_id AND user_id = OLD.user_id AND OLD.to_account_id IS NOT NULL AND OLD.type = 'transfer';
+  WHERE  id = OLD.to_account_id
+    AND  OLD.to_account_id IS NOT NULL
+    AND  OLD.type = 'transfer'
+    AND  (
+      user_id = OLD.user_id
+      OR EXISTS (
+        SELECT 1 FROM shared_members sm
+        WHERE sm.resource_type = 'account' AND sm.resource_id = accounts.id AND sm.user_id = OLD.user_id
+      )
+    );
 
   UPDATE savings_goals
   SET    current_amount = MAX(0, current_amount - CASE
                                                     WHEN OLD.type IN ('expense', 'transfer') THEN OLD.amount
-                                                    WHEN OLD.type = 'income' THEN -OLD.amount
+                                                    WHEN OLD.type = 'income' AND OLD.category_id != 'cat-savings' THEN OLD.amount
+                                                    WHEN OLD.type = 'income' AND OLD.category_id = 'cat-savings' THEN -OLD.amount
                                                     ELSE 0
                                                   END),
          updated_at     = datetime('now')
-  WHERE  id = OLD.goal_id AND user_id = OLD.user_id AND OLD.goal_id IS NOT NULL;
+  WHERE  id = OLD.goal_id
+    AND  OLD.goal_id IS NOT NULL
+    AND  (
+      user_id = OLD.user_id
+      OR EXISTS (
+        SELECT 1 FROM shared_members sm
+        WHERE sm.resource_type = 'goal' AND sm.resource_id = savings_goals.id AND sm.user_id = OLD.user_id
+      )
+    );
 
   -- Aplicar nuevos valores (NEW)
   UPDATE accounts
@@ -250,28 +366,55 @@ BEGIN
                                   ELSE 0
                                 END,
          updated_at = datetime('now')
-  WHERE  id = NEW.account_id AND user_id = NEW.user_id;
+  WHERE  id = NEW.account_id
+    AND  id != 'direct-goal'
+    AND  (
+      user_id = NEW.user_id
+      OR EXISTS (
+        SELECT 1 FROM shared_members sm
+        WHERE sm.resource_type = 'account' AND sm.resource_id = accounts.id AND sm.user_id = NEW.user_id
+      )
+    );
 
   UPDATE accounts
   SET    balance    = balance + NEW.amount,
          updated_at = datetime('now')
-  WHERE  id = NEW.to_account_id AND user_id = NEW.user_id AND NEW.to_account_id IS NOT NULL AND NEW.type = 'transfer';
+  WHERE  id = NEW.to_account_id
+    AND  NEW.to_account_id IS NOT NULL
+    AND  NEW.type = 'transfer'
+    AND  (
+      user_id = NEW.user_id
+      OR EXISTS (
+        SELECT 1 FROM shared_members sm
+        WHERE sm.resource_type = 'account' AND sm.resource_id = accounts.id AND sm.user_id = NEW.user_id
+      )
+    );
 
   UPDATE savings_goals
   SET    current_amount = MAX(0, current_amount + CASE
                                                     WHEN NEW.type IN ('expense', 'transfer') THEN NEW.amount
-                                                    WHEN NEW.type = 'income' THEN -NEW.amount
+                                                    WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN NEW.amount
+                                                    WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -NEW.amount
                                                     ELSE 0
                                                   END),
          status         = CASE
                             WHEN (current_amount + CASE
                                                     WHEN NEW.type IN ('expense', 'transfer') THEN NEW.amount
-                                                    WHEN NEW.type = 'income' THEN -NEW.amount
+                                                    WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN NEW.amount
+                                                    WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -NEW.amount
                                                     ELSE 0
                                                   END) >= target_amount THEN 'completed'
                             ELSE 'active'
                           END,
          updated_at     = datetime('now')
-  WHERE  id = NEW.goal_id AND user_id = NEW.user_id AND NEW.goal_id IS NOT NULL;
+  WHERE  id = NEW.goal_id
+    AND  NEW.goal_id IS NOT NULL
+    AND  (
+      user_id = NEW.user_id
+      OR EXISTS (
+        SELECT 1 FROM shared_members sm
+        WHERE sm.resource_type = 'goal' AND sm.resource_id = savings_goals.id AND sm.user_id = NEW.user_id
+      )
+    );
 END;
 

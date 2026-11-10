@@ -13,6 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Button, Card, Typography } from "@/components/ui";
+import { ShareResourceModal } from "@/components/shared/ShareModals";
 import {
   useAccount,
   useUpdateAccount,
@@ -59,6 +60,7 @@ export default function AccountDetailScreen() {
   const deleteTxMutation = useDeleteTransaction();
 
   // Modals state
+  const [showShareModal, setShowShareModal] = useState(false);
   const [showEditAccountModal, setShowEditAccountModal] = useState(false);
   const [editName, setEditName] = useState("");
   const [editColor, setEditColor] = useState("");
@@ -241,10 +243,10 @@ export default function AccountDetailScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* ── Barra superior de cuenta ──────────────────────── */}
-        <View className="flex-row items-center justify-between">
-          <View className="flex-row items-center gap-3">
+        <View className="flex-row items-center justify-between gap-2">
+          <View className="flex-row items-center gap-3 flex-1 min-w-0">
             <View
-              className="w-10 h-10 rounded-2xl items-center justify-center"
+              className="w-10 h-10 rounded-2xl items-center justify-center shrink-0"
               style={{ backgroundColor: account.color }}
             >
               <MaterialCommunityIcons
@@ -256,9 +258,11 @@ export default function AccountDetailScreen() {
                 color={colors.white}
               />
             </View>
-            <View>
-              <Typography variant="h2">{account.name}</Typography>
-              <Typography variant="caption" muted>
+            <View className="flex-1 min-w-0">
+              <Typography variant="h2" numberOfLines={1}>
+                {account.name}
+              </Typography>
+              <Typography variant="caption" muted numberOfLines={1}>
                 {account.type === "credit"
                   ? "Tarjeta de Crédito"
                   : account.type === "savings"
@@ -272,22 +276,43 @@ export default function AccountDetailScreen() {
             </View>
           </View>
 
-          <Pressable
-            onPress={handleOpenEditAccount}
-            className="flex-row items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-700/80 active:bg-surface-600"
-          >
-            <MaterialCommunityIcons
-              name="pencil"
-              size={16}
-              color={colors.text.secondary}
-            />
-            <Typography
-              variant="caption"
-              className="font-semibold text-text-secondary"
+          <View className="flex-row items-center gap-2 shrink-0">
+            <Pressable
+              onPress={() => setShowShareModal(true)}
+              className="flex-row items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary-500/15 active:opacity-80"
             >
-              Editar
-            </Typography>
-          </Pressable>
+              <MaterialCommunityIcons
+                name="account-multiple"
+                size={16}
+                color={colors.primary[500]}
+              />
+              <Typography
+                variant="caption"
+                className="font-semibold text-primary-500"
+              >
+                {account.isShared
+                  ? `Compartida${account.members && account.members.length > 1 ? ` (${account.members.length})` : ""}`
+                  : "Compartir"}
+              </Typography>
+            </Pressable>
+
+            <Pressable
+              onPress={handleOpenEditAccount}
+              className="flex-row items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-700/80 active:bg-surface-600"
+            >
+              <MaterialCommunityIcons
+                name="pencil"
+                size={16}
+                color={colors.text.secondary}
+              />
+              <Typography
+                variant="caption"
+                className="font-semibold text-text-secondary"
+              >
+                Editar
+              </Typography>
+            </Pressable>
+          </View>
         </View>
 
         {/* ── Balance card ─────────────────────────────────── */}
@@ -440,8 +465,11 @@ export default function AccountDetailScreen() {
                 <Card className="flex-row items-center gap-3">
                   <View className="flex-1 min-w-0">
                     <Typography numberOfLines={1}>{tx.description}</Typography>
-                    <Typography variant="caption">
+                    <Typography variant="caption" numberOfLines={1}>
                       {formatRelativeDate(tx.date)}
+                      {account.isShared && tx.authorName
+                        ? ` • 👤 ${tx.authorName}`
+                        : ""}
                     </Typography>
                   </View>
                   <Typography
@@ -464,6 +492,18 @@ export default function AccountDetailScreen() {
           })
         )}
       </ScrollView>
+
+      {/* ── MODAL: Compartir Cuenta ─────────────────────────────── */}
+      <ShareResourceModal
+        visible={showShareModal}
+        onClose={() => setShowShareModal(false)}
+        resourceType="account"
+        resourceId={account.id}
+        resourceName={account.name}
+        isOwner={account.isOwner !== false}
+        members={account.members ?? []}
+        onLeftResource={() => router.replace("/(tabs)/accounts")}
+      />
 
       {/* ── MODAL: Editar Cuenta ────────────────────────────────── */}
       <Modal

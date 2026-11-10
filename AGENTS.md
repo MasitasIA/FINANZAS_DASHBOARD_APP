@@ -63,12 +63,12 @@ finanzas_dashboard/
 │   ├── (tabs)/
 │   │   ├── _layout.tsx           ← Tab bar (4 tabs)
 │   │   ├── index.tsx             ← Dashboard / Home + System Info & OTA Check Modal
-│   │   ├── accounts.tsx          ← Accounts list + net worth summary
-│   │   ├── goals.tsx             ← Savings goals list
+│   │   ├── accounts.tsx          ← Accounts list + net worth summary + "Unirse con código"
+│   │   ├── goals.tsx             ← Savings goals list + "Unirse con código"
 │   │   └── reports.tsx           ← Monthly, Annual & Future Projection (Proyección) reports
-│   ├── accounts/[id].tsx         ← Account detail + recent transactions
+│   ├── accounts/[id].tsx         ← Account detail + recent transactions + Share account modal
 │   ├── accounts/new.tsx          ← New account modal (presentation: "modal")
-│   ├── goals/[id].tsx            ← Goal detail + progress
+│   ├── goals/[id].tsx            ← Goal detail + progress + per-member breakdown + Share goal modal
 │   ├── goals/new.tsx             ← New goal modal (presentation: "modal")
 │   ├── transaction/new.tsx       ← New transaction modal (presentation: "modal")
 │   └── recurring/index.tsx       ← Automatic Expenses & Incomes management + User reminder hour
@@ -87,13 +87,13 @@ finanzas_dashboard/
     │       ├── db.ts             ← In-memory seed data
     │       └── handlers.ts       ← Mock implementations of every API endpoint
     ├── services/                 ← Data access layer (calls api.ts OR mock handlers)
-    │   ├── accounts.service.ts
+    │   ├── accounts.service.ts   ← Also contains shareService (/share/invite, /share/join, /share/leave)
     │   ├── categories.service.ts
     │   ├── transactions.service.ts
     │   ├── goals.service.ts      ← Also contains reportsService & statsService
     │   └── recurring.service.ts  ← Recurring expenses/incomes + user_settings + process-due
     ├── hooks/                    ← TanStack Query hooks (queries + mutations)
-    │   ├── useAccounts.ts
+    │   ├── useAccounts.ts        ← Also contains useCreateShareInvite, useJoinSharedResource, useLeaveSharedResource
     │   ├── useCategories.ts
     │   ├── useTransactions.ts
     │   ├── useGoals.ts           ← Also contains useMonthlyReport, useAnnualReport & useSystemStats
@@ -109,6 +109,7 @@ finanzas_dashboard/
     │   │   └── index.ts          ← Barrel export
     │   ├── accounts/AccountCard.tsx
     │   ├── goals/GoalCard.tsx
+    │   ├── shared/ShareModals.tsx ← JoinWithCodeModal & ShareResourceModal (UNPO-XXXX invites)
     │   └── recurring/RecurringAutoProcessor.tsx ← Background/foreground processor + variable price prompt modal
     └── utils/
         └── formatters.ts         ← formatCurrency, formatDate, formatRelativeDate
@@ -140,13 +141,19 @@ finanzas_dashboard/
   - **On `dueDate`** at `reminderTime`: variable price prompt notification (opens the confirmation modal on tap) or fixed auto-apply notification.
   - **Immediate notification** when fixed items are auto-applied.
 
-### 4. Security Architecture (`worker/src/index.ts` & `schema.sql`)
+### 4. Shared Accounts & Goals (`shared_members` & `share_invites`)
+
+- Owners can generate a 24-hour invite code (`UNPO-XXXX`) via `POST /share/invite` for any `account` or `goal`.
+- Other authenticated users can join via `POST /share/join`, which records both the `owner` and `editor` in `shared_members`.
+- Every transaction/contribution/withdrawal stores `author_name` (extracted from the verified Firebase JWT) and updates shared balances via D1 triggers (`user_id = NEW.user_id OR EXISTS (SELECT 1 FROM shared_members ...)`).
+
+### 5. Security Architecture (`worker/src/index.ts` & `schema.sql`)
 
 - **Authentication**: Every Worker request requires a valid Firebase ID Token (`Bearer <jwt>`) verified against Google's RS256 public keys.
 - **Row-Level Security (RLS)**:
-  - Every SQL query filters by `user_id = ?`.
-  - Cross-entity operations (`transactions`, `goals/:id/contribute`, `goals/:id/withdraw`, `recurring-expenses`) verify account/goal ownership via `verifyAccountOwnership` and `verifyGoalOwnership`.
-  - All SQLite triggers in `schema.sql` enforce `AND user_id = NEW.user_id` / `OLD.user_id`.
+  - Every SQL query filters by `user_id = ?` (or membership in `shared_members` for shared accounts/goals).
+  - Cross-entity operations (`transactions`, `goals/:id/contribute`, `goals/:id/withdraw`, `recurring-expenses`) verify account/goal ownership or shared membership via `verifyAccountOwnership` and `verifyGoalOwnership`.
+  - All SQLite triggers in `schema.sql` enforce `user_id = NEW.user_id` / `OLD.user_id` or `EXISTS (SELECT 1 FROM shared_members ...)`.
 - **Input Sanitization & Rate Limiting**:
   - Use `sanitizeText`, `sanitizeIdentifier`, `sanitizeColor`, `sanitizeIcon`, `sanitizeAmount`, `sanitizeTime`, and `parseSafeJsonBody` (16 KB limit).
   - Two-tier rate limiting: 90 req/min per IP pre-auth; 120 reads/min and 30 writes/min per `userId`.
@@ -161,10 +168,12 @@ Full schema is in [`schema.sql`](./schema.sql). Summary:
 | --- | --- |
 | `accounts` | `id, user_id, name, type, currency, balance, color, icon, credit_limit, closing_day, due_day` |
 | `categories` | `id, name, icon, color, type (income\|expense\|transfer), is_default` |
-| `transactions` | `id, user_id, account_id, category_id, type, amount, currency, description, note, date, to_account_id, goal_id` |
+| `transactions` | `id, user_id, author_name, account_id, category_id, type, amount, currency, description, note, date, to_account_id, goal_id` |
 | `savings_goals` | `id, user_id, name, target_amount, current_amount, currency, deadline, icon, color, status` |
 | `recurring_expenses` | `id, user_id, type (expense\|income), account_id, category_id, name, amount, currency, due_date, due_day, frequency, is_variable, icon, color, is_active, last_paid_date` |
 | `user_settings` | `user_id (PK), reminder_time, updated_at` |
+| `shared_members` | `id, resource_type (account\|goal), resource_id, owner_id, user_id, display_name, role (owner\|editor)` |
+| `share_invites` | `code (PK, UNPO-XXXX), resource_type (account\|goal), resource_id, owner_id, owner_name, expires_at` |
 
 ### Extending the Schema
 
@@ -212,7 +221,7 @@ Use **Tailwind class names** via the `className` prop on any React Native compon
 ## Building & Deploying (EAS & OTA)
 
 - **`version` vs `runtimeVersion` in `app.json`**:
-  - `expo.version` (e.g. `"1.0.4"`): User-facing version displayed in the Dashboard info modal. Bump this for OTA updates.
+  - `expo.version` (e.g. `"1.0.5"`): User-facing version displayed in the Dashboard info modal. Bump this for OTA updates.
   - `expo.runtimeVersion` (e.g. `"1.0.0"`): Native binary compatibility version. **Only** change this when building a new APK after adding/modifying native modules; OTA updates only deliver to APKs with a matching `runtimeVersion`.
 
 ```bash

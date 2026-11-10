@@ -42,9 +42,29 @@ export function AccountCard({ account, onPress }: AccountCardProps) {
 
           {/* Info */}
           <View className="flex-1 min-w-0">
-            <Typography variant="h3" numberOfLines={1}>
-              {account.name}
-            </Typography>
+            <View className="flex-row items-center gap-2">
+              <Typography variant="h3" className="shrink" numberOfLines={1}>
+                {account.name}
+              </Typography>
+              {account.isShared && (
+                <View className="flex-row items-center gap-1 px-2 py-0.5 rounded-full bg-primary-500/15 shrink-0">
+                  <MaterialCommunityIcons
+                    name="account-multiple"
+                    size={12}
+                    color="#e23d28"
+                  />
+                  <Typography
+                    variant="caption"
+                    className="text-[10px] font-bold text-primary-500"
+                  >
+                    Compartida
+                    {account.members && account.members.length > 1
+                      ? ` (${account.members.length})`
+                      : ""}
+                  </Typography>
+                </View>
+              )}
+            </View>
             <Typography variant="caption" className="mt-0.5" muted numberOfLines={1}>
               {TYPE_LABELS[account.type] ?? account.type}
             </Typography>

@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Button, Card, Typography } from "@/components/ui";
 import { AccountCard } from "@/components/accounts/AccountCard";
+import { JoinWithCodeModal } from "@/components/shared/ShareModals";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useGoals } from "@/hooks/useGoals";
 import { formatCurrency } from "@/utils/formatters";
@@ -12,6 +14,7 @@ import { colors } from "../../tailwind.config";
 export default function AccountsScreen() {
   const { data, isLoading, error, refetch } = useAccounts();
   const { data: goalsData } = useGoals();
+  const [joinVisible, setJoinVisible] = useState(false);
   const accounts = data?.data ?? [];
   const goals = goalsData?.data ?? [];
 
@@ -78,6 +81,20 @@ export default function AccountsScreen() {
       <View className="flex-row items-center justify-between px-4 pt-6 pb-4">
         <Typography variant="h1">Cuentas</Typography>
         <View className="flex-row items-center gap-2">
+          <Pressable
+            onPress={() => setJoinVisible(true)}
+            accessibilityLabel="Unirse a cuenta compartida con código"
+            className="flex-row items-center gap-1.5 px-3 py-2 rounded-xl bg-surface-800 border border-surface-600 active:opacity-80"
+          >
+            <MaterialCommunityIcons
+              name="account-multiple-plus"
+              size={18}
+              color={colors.primary[500]}
+            />
+            <Typography className="text-xs font-semibold text-text-primary">
+              Código
+            </Typography>
+          </Pressable>
           <Button
             title="Nueva"
             size="sm"
@@ -267,6 +284,11 @@ export default function AccountsScreen() {
           )}
         </ScrollView>
       )}
+
+      <JoinWithCodeModal
+        visible={joinVisible}
+        onClose={() => setJoinVisible(false)}
+      />
     </SafeAreaView>
   );
 }

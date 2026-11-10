@@ -13,6 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Button, Card, Typography } from "@/components/ui";
+import { ShareResourceModal } from "@/components/shared/ShareModals";
 import {
   useGoal,
   useUpdateGoal,
@@ -21,6 +22,7 @@ import {
   useWithdrawFromGoal,
 } from "@/hooks/useGoals";
 import { useAccounts } from "@/hooks/useAccounts";
+import { useCategories } from "@/hooks/useCategories";
 import {
   useTransactions,
   useDeleteTransaction,
@@ -81,6 +83,11 @@ export default function GoalDetailScreen() {
     (a) => a.type !== "credit",
   );
 
+  const { data: incomeCatsData } = useCategories("income");
+  const incomeCategories = (incomeCatsData?.data ?? []).filter(
+    (c) => c.id !== "cat-savings",
+  );
+
   const { data: txData, isLoading: loadingTx } = useTransactions({
     goalId: id,
     pageSize: 20,
@@ -95,6 +102,7 @@ export default function GoalDetailScreen() {
   const { mutate: deleteTx, isPending: isDeletingTx } = useDeleteTransaction();
 
   // Modales
+  const [showShareModal, setShowShareModal] = useState(false);
   const [activeModal, setActiveModal] = useState<
     "contribute" | "withdraw" | "edit" | null
   >(null);
@@ -102,6 +110,8 @@ export default function GoalDetailScreen() {
   // Formulario Aporte / Retiro
   const [modalAmount, setModalAmount] = useState("");
   const [modalAccountId, setModalAccountId] = useState<string>("");
+  const [isDirectIncome, setIsDirectIncome] = useState(false);
+  const [modalCategoryId, setModalCategoryId] = useState<string>("cat-contribution");
   const [modalNote, setModalNote] = useState("");
 
   // Formulario Edición
@@ -149,6 +159,8 @@ export default function GoalDetailScreen() {
   const handleOpenContribute = () => {
     setModalAmount("");
     setModalAccountId(accounts[0]?.id ?? "");
+    setIsDirectIncome(accounts.length === 0);
+    setModalCategoryId("cat-contribution");
     setModalNote("");
     setActiveModal("contribute");
   };
@@ -175,13 +187,16 @@ export default function GoalDetailScreen() {
   // Ejecutar Aporte
   const handleConfirmContribute = () => {
     const amt = parseFloat(modalAmount.replace(",", "."));
-    if (isNaN(amt) || amt <= 0 || !modalAccountId) return;
+    if (isNaN(amt) || amt <= 0) return;
+    if (!isDirectIncome && !modalAccountId) return;
 
     contribute(
       {
         id: goal.id,
         payload: {
-          accountId: modalAccountId,
+          accountId: isDirectIncome ? undefined : modalAccountId,
+          isDirectIncome,
+          categoryId: isDirectIncome ? modalCategoryId : "cat-savings",
           amount: amt,
           note: modalNote.trim() || undefined,
         },
@@ -273,10 +288,11 @@ export default function GoalDetailScreen() {
 
   // Eliminar movimiento individual de la meta (revierte saldo en meta y cuenta)
   const handleDeleteGoalTx = (tx: Transaction) => {
-    const isDeposit =
-      tx.type === "expense" || tx.description.toLowerCase().includes("aporte");
+    const isDeposit = !(
+      tx.type === "income" && tx.categoryId === "cat-savings"
+    );
     const label = isDeposit ? "aporte" : "retiro";
-    const msg = `¿Eliminar este ${label} de ${formatCurrency(tx.amount, tx.currency)}? Se revertirá automáticamente el saldo en la meta y en la cuenta asociada.`;
+    const msg = `¿Eliminar este ${label} de ${formatCurrency(tx.amount, tx.currency)}? Se revertirá automáticamente el saldo en la meta.`;
 
     if (Platform.OS === "web") {
       if (window.confirm(msg)) {
@@ -347,23 +363,44 @@ export default function GoalDetailScreen() {
               </Typography>
             </View>
 
-            {/* Botón Editar */}
-            <Pressable
-              onPress={handleOpenEdit}
-              className="flex-row items-center gap-1 px-3 py-1.5 rounded-xl bg-surface-700/80 active:bg-surface-600"
-            >
-              <MaterialCommunityIcons
-                name="pencil"
-                size={15}
-                color={colors.text.secondary}
-              />
-              <Typography
-                variant="caption"
-                className="font-semibold text-text-primary"
+            {/* Botones Compartir y Editar */}
+            <View className="flex-row items-center gap-2">
+              <Pressable
+                onPress={() => setShowShareModal(true)}
+                className="flex-row items-center gap-1 px-3 py-1.5 rounded-xl bg-primary-500/15 active:opacity-80"
               >
-                Editar
-              </Typography>
-            </Pressable>
+                <MaterialCommunityIcons
+                  name="account-multiple"
+                  size={15}
+                  color={colors.primary[500]}
+                />
+                <Typography
+                  variant="caption"
+                  className="font-semibold text-primary-500"
+                >
+                  {goal.isShared
+                    ? `Compartida${goal.members && goal.members.length > 1 ? ` (${goal.members.length})` : ""}`
+                    : "Compartir"}
+                </Typography>
+              </Pressable>
+
+              <Pressable
+                onPress={handleOpenEdit}
+                className="flex-row items-center gap-1 px-3 py-1.5 rounded-xl bg-surface-700/80 active:bg-surface-600"
+              >
+                <MaterialCommunityIcons
+                  name="pencil"
+                  size={15}
+                  color={colors.text.secondary}
+                />
+                <Typography
+                  variant="caption"
+                  className="font-semibold text-text-primary"
+                >
+                  Editar
+                </Typography>
+              </Pressable>
+            </View>
           </View>
 
           {/* Avatar Icon */}
@@ -530,6 +567,81 @@ export default function GoalDetailScreen() {
           </Card>
         )}
 
+        {/* ── Aportes por miembro (si es meta compartida) ────── */}
+        {goal.isShared && goalTransactions.length > 0 && (
+          <Card className="gap-3">
+            <View className="flex-row items-center gap-2">
+              <MaterialCommunityIcons
+                name="account-group"
+                size={20}
+                color={colors.primary[500]}
+              />
+              <Typography variant="h3">Aportes por miembro</Typography>
+            </View>
+            {(() => {
+              const totalsByMember = new Map<string, number>();
+              for (const tx of goalTransactions) {
+                const author = tx.authorName || "Miembro";
+                const isDep = !(
+                  tx.type === "income" && tx.categoryId === "cat-savings"
+                );
+                const delta = isDep ? tx.amount : -tx.amount;
+                totalsByMember.set(
+                  author,
+                  (totalsByMember.get(author) ?? 0) + delta,
+                );
+              }
+              return Array.from(totalsByMember.entries()).map(
+                ([memberName, netContributed]) => {
+                  const pct =
+                    goal.currentAmount > 0
+                      ? Math.max(
+                          0,
+                          Math.min(
+                            100,
+                            Math.round(
+                              (netContributed / goal.currentAmount) * 100,
+                            ),
+                          ),
+                        )
+                      : 0;
+                  return (
+                    <View
+                      key={memberName}
+                      className="flex-row items-center justify-between bg-surface-700/50 px-3.5 py-2.5 rounded-2xl"
+                    >
+                      <View className="flex-row items-center gap-2 flex-1 min-w-0 pr-2">
+                        <MaterialCommunityIcons
+                          name="account-circle"
+                          size={18}
+                          color={colors.primary[500]}
+                        />
+                        <Typography
+                          className="font-semibold text-sm flex-1"
+                          numberOfLines={1}
+                        >
+                          {memberName}
+                        </Typography>
+                      </View>
+                      <View className="items-end shrink-0">
+                        <Typography className="font-bold text-sm text-success-500">
+                          {formatCurrency(
+                            Math.max(0, netContributed),
+                            goal.currency,
+                          )}
+                        </Typography>
+                        <Typography variant="caption" muted>
+                          {pct}% del total ahorrado
+                        </Typography>
+                      </View>
+                    </View>
+                  );
+                },
+              );
+            })()}
+          </Card>
+        )}
+
         {/* ── Acciones principales ───────────────────────────── */}
         <View className="flex-row gap-3">
           <Button
@@ -565,9 +677,11 @@ export default function GoalDetailScreen() {
             </Card>
           ) : (
             goalTransactions.map((tx) => {
-              const isDeposit =
-                tx.type === "expense" ||
-                tx.description.toLowerCase().includes("aporte");
+              const isDeposit = !(
+                tx.type === "income" && tx.categoryId === "cat-savings"
+              );
+              const isDirectGoalIncome =
+                tx.type === "income" && tx.categoryId !== "cat-savings";
               return (
                 <Card key={tx.id} className="flex-row items-center gap-3">
                   <View
@@ -587,12 +701,19 @@ export default function GoalDetailScreen() {
                     />
                   </View>
 
-                  <View className="flex-1">
+                  <View className="flex-1 min-w-0">
                     <Typography className="font-semibold text-text-primary">
-                      {isDeposit ? "Aporte" : "Retiro"}
+                      {isDirectGoalIncome
+                        ? "Ingreso directo"
+                        : isDeposit
+                          ? "Aporte desde cuenta"
+                          : "Retiro"}
                     </Typography>
-                    <Typography variant="caption" muted>
+                    <Typography variant="caption" muted numberOfLines={1}>
                       {formatRelativeDate(tx.date)}
+                      {goal.isShared && tx.authorName
+                        ? ` • 👤 ${tx.authorName}`
+                        : ""}
                       {tx.note ? ` • ${tx.note}` : ""}
                     </Typography>
                   </View>
@@ -624,16 +745,30 @@ export default function GoalDetailScreen() {
           )}
         </View>
 
-        {/* ── Botón Eliminar Meta ────────────────────────────── */}
-        <View className="pt-4 pb-2">
-          <Button
-            title="Eliminar meta"
-            variant="danger"
-            loading={isDeleting}
-            onPress={handleDelete}
-          />
-        </View>
+        {/* ── Botón Eliminar Meta (solo propietario) ─────────── */}
+        {goal.isOwner !== false && (
+          <View className="pt-4 pb-2">
+            <Button
+              title="Eliminar meta"
+              variant="danger"
+              loading={isDeleting}
+              onPress={handleDelete}
+            />
+          </View>
+        )}
       </ScrollView>
+
+      {/* ─── MODAL COMPARTIR META ───────────────────────────── */}
+      <ShareResourceModal
+        visible={showShareModal}
+        onClose={() => setShowShareModal(false)}
+        resourceType="goal"
+        resourceId={goal.id}
+        resourceName={goal.name}
+        isOwner={goal.isOwner !== false}
+        members={goal.members ?? []}
+        onLeftResource={() => router.replace("/(tabs)/goals")}
+      />
 
       {/* ─── MODAL APORTAR FONDOS ────────────────────────────── */}
       <Modal
@@ -643,7 +778,7 @@ export default function GoalDetailScreen() {
         onRequestClose={() => setActiveModal(null)}
       >
         <View className="flex-1 justify-end bg-black/50">
-          <View className="bg-surface-800 rounded-t-3xl p-6 gap-4">
+          <View className="bg-surface-800 rounded-t-3xl p-6 gap-4 max-h-[88%]">
             <View className="flex-row items-center justify-between">
               <Typography variant="h2">Aportar a la meta</Typography>
               <Pressable onPress={() => setActiveModal(null)}>
@@ -655,77 +790,202 @@ export default function GoalDetailScreen() {
               </Pressable>
             </View>
 
-            {/* Monto */}
-            <View>
-              <Typography variant="label" className="mb-2">
-                Monto a aportar ({goal.currency}) *
-              </Typography>
-              <TextInput
-                value={modalAmount}
-                onChangeText={setModalAmount}
-                placeholder="0,00"
-                placeholderTextColor={colors.text.muted}
-                keyboardType="decimal-pad"
-                autoFocus
-                className="text-3xl font-bold text-text-primary border-b border-surface-600 pb-2"
-                style={{ fontFamily: "Inter_700Bold" }}
-              />
-            </View>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerClassName="gap-4 pb-2"
+            >
+              {/* Monto */}
+              <View>
+                <Typography variant="label" className="mb-2">
+                  Monto a aportar ({goal.currency}) *
+                </Typography>
+                <TextInput
+                  value={modalAmount}
+                  onChangeText={setModalAmount}
+                  placeholder="0,00"
+                  placeholderTextColor={colors.text.muted}
+                  keyboardType="decimal-pad"
+                  autoFocus
+                  className="text-3xl font-bold text-text-primary border-b border-surface-600 pb-2"
+                  style={{ fontFamily: "Inter_700Bold" }}
+                />
+              </View>
 
-            {/* Cuenta de origen */}
-            <View className="gap-2">
-              <Typography variant="label">
-                Cuenta de origen (de donde sale el dinero)
-              </Typography>
-              {accounts.map((acc) => {
-                const isSelected = modalAccountId === acc.id;
-                return (
+              {/* Tipo de aporte: Transferir desde cuenta vs Ingreso directo */}
+              <View className="gap-2">
+                <Typography variant="label">Origen de los fondos</Typography>
+                <View className="flex-row gap-2">
                   <Pressable
-                    key={acc.id}
-                    onPress={() => setModalAccountId(acc.id)}
-                    className={`flex-row items-center justify-between p-3 rounded-2xl border ${
-                      isSelected
+                    onPress={() => setIsDirectIncome(false)}
+                    className={`flex-1 p-3 rounded-2xl border items-center gap-1 ${
+                      !isDirectIncome
                         ? "bg-primary-50 border-primary-600"
                         : "bg-surface-700/60 border-transparent"
                     }`}
                   >
-                    <Typography
-                      className={
-                        isSelected ? "font-semibold text-primary-700" : ""
+                    <MaterialCommunityIcons
+                      name="bank-transfer"
+                      size={20}
+                      color={
+                        !isDirectIncome
+                          ? colors.primary[600]
+                          : colors.text.secondary
                       }
+                    />
+                    <Typography
+                      className={`text-xs font-semibold text-center ${
+                        !isDirectIncome
+                          ? "text-primary-700"
+                          : "text-text-secondary"
+                      }`}
                     >
-                      {acc.name}
+                      Desde una cuenta
                     </Typography>
-                    <Typography variant="caption" muted>
-                      {formatCurrency(acc.balance, acc.currency)}
+                    <Typography
+                      variant="caption"
+                      muted
+                      className="text-[10px] text-center"
+                    >
+                      Transferencia interna
                     </Typography>
                   </Pressable>
-                );
-              })}
-            </View>
 
-            {/* Nota opcional */}
-            <View>
-              <Typography variant="label" className="mb-1">
-                Nota o motivo (opcional)
-              </Typography>
-              <TextInput
-                value={modalNote}
-                onChangeText={setModalNote}
-                placeholder="Ej: Ahorro de la semana, Sueldo extra..."
-                placeholderTextColor={colors.text.muted}
-                className="bg-surface-700/60 p-3 rounded-2xl text-base text-text-primary"
-                style={{ fontFamily: "Inter_400Regular" }}
+                  <Pressable
+                    onPress={() => setIsDirectIncome(true)}
+                    className={`flex-1 p-3 rounded-2xl border items-center gap-1 ${
+                      isDirectIncome
+                        ? "bg-success-50 border-success-500"
+                        : "bg-surface-700/60 border-transparent"
+                    }`}
+                  >
+                    <MaterialCommunityIcons
+                      name="cash-plus"
+                      size={20}
+                      color={
+                        isDirectIncome
+                          ? colors.success[500]
+                          : colors.text.secondary
+                      }
+                    />
+                    <Typography
+                      className={`text-xs font-semibold text-center ${
+                        isDirectIncome
+                          ? "text-success-600"
+                          : "text-text-secondary"
+                      }`}
+                    >
+                      Ingreso directo
+                    </Typography>
+                    <Typography
+                      variant="caption"
+                      muted
+                      className="text-[10px] text-center"
+                    >
+                      Suma en reportes
+                    </Typography>
+                  </Pressable>
+                </View>
+              </View>
+
+              {!isDirectIncome ? (
+                /* Cuenta de origen */
+                <View className="gap-2">
+                  <Typography variant="label">
+                    Cuenta de origen (de donde sale el dinero)
+                  </Typography>
+                  {accounts.map((acc) => {
+                    const isSelected = modalAccountId === acc.id;
+                    return (
+                      <Pressable
+                        key={acc.id}
+                        onPress={() => setModalAccountId(acc.id)}
+                        className={`flex-row items-center justify-between p-3 rounded-2xl border ${
+                          isSelected
+                            ? "bg-primary-50 border-primary-600"
+                            : "bg-surface-700/60 border-transparent"
+                        }`}
+                      >
+                        <Typography
+                          className={
+                            isSelected ? "font-semibold text-primary-700" : ""
+                          }
+                        >
+                          {acc.name}
+                        </Typography>
+                        <Typography variant="caption" muted>
+                          {formatCurrency(acc.balance, acc.currency)}
+                        </Typography>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : (
+                /* Categoría del ingreso directo */
+                <View className="gap-2">
+                  <Typography variant="label">
+                    Categoría del ingreso (se reflejará en reportes)
+                  </Typography>
+                  <View className="flex-row flex-wrap gap-2">
+                    {incomeCategories.map((cat) => {
+                      const isSelected = modalCategoryId === cat.id;
+                      return (
+                        <Pressable
+                          key={cat.id}
+                          onPress={() => setModalCategoryId(cat.id)}
+                          className={`flex-row items-center gap-1.5 px-3 py-2 rounded-xl border ${
+                            isSelected
+                              ? "bg-success-50 border-success-500"
+                              : "bg-surface-700/60 border-transparent"
+                          }`}
+                        >
+                          <MaterialCommunityIcons
+                            name={cat.icon as any}
+                            size={16}
+                            color={
+                              isSelected ? colors.success[500] : cat.color
+                            }
+                          />
+                          <Typography
+                            className={`text-xs ${
+                              isSelected
+                                ? "font-semibold text-success-600"
+                                : "text-text-primary"
+                            }`}
+                          >
+                            {cat.name}
+                          </Typography>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+
+              {/* Nota opcional */}
+              <View>
+                <Typography variant="label" className="mb-1">
+                  Nota o motivo (opcional)
+                </Typography>
+                <TextInput
+                  value={modalNote}
+                  onChangeText={setModalNote}
+                  placeholder="Ej: Ahorro de la semana, Sueldo extra..."
+                  placeholderTextColor={colors.text.muted}
+                  className="bg-surface-700/60 p-3 rounded-2xl text-base text-text-primary"
+                  style={{ fontFamily: "Inter_400Regular" }}
+                />
+              </View>
+
+              <Button
+                title="Confirmar aporte"
+                loading={isContributing}
+                disabled={
+                  !modalAmount || (!isDirectIncome && !modalAccountId)
+                }
+                onPress={handleConfirmContribute}
+                className="mt-2"
               />
-            </View>
-
-            <Button
-              title="Confirmar aporte"
-              loading={isContributing}
-              disabled={!modalAmount || !modalAccountId}
-              onPress={handleConfirmContribute}
-              className="mt-2"
-            />
+            </ScrollView>
           </View>
         </View>
       </Modal>

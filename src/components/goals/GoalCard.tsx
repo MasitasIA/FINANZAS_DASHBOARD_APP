@@ -31,9 +31,29 @@ export function GoalCard({ goal, onPress }: GoalCardProps) {
             />
           </View>
           <View className="flex-1 min-w-0">
-            <Typography variant="h3" numberOfLines={1}>
-              {goal.name}
-            </Typography>
+            <View className="flex-row items-center gap-2">
+              <Typography variant="h3" className="shrink" numberOfLines={1}>
+                {goal.name}
+              </Typography>
+              {goal.isShared && (
+                <View className="flex-row items-center gap-1 px-2 py-0.5 rounded-full bg-primary-500/15 shrink-0">
+                  <MaterialCommunityIcons
+                    name="account-multiple"
+                    size={12}
+                    color="#e23d28"
+                  />
+                  <Typography
+                    variant="caption"
+                    className="text-[10px] font-bold text-primary-500"
+                  >
+                    Compartida
+                    {goal.members && goal.members.length > 1
+                      ? ` (${goal.members.length})`
+                      : ""}
+                  </Typography>
+                </View>
+              )}
+            </View>
             {goal.deadline && (
               <Typography variant="caption">
                 {new Date(goal.deadline).toLocaleDateString("es-AR", {

@@ -1,8 +1,16 @@
 import { api } from "@/lib/api";
 import {
   mockAccountHandlers,
+  mockShareHandlers,
 } from "@/lib/mock/handlers";
-import type { Account, ApiResponse, PaginatedResponse } from "@/types";
+import type {
+  Account,
+  ApiResponse,
+  PaginatedResponse,
+  ShareInviteResponse,
+  ShareJoinResponse,
+  SharedResourceType,
+} from "@/types";
 
 const USE_MOCK = process.env.EXPO_PUBLIC_USE_MOCK === "true";
 
@@ -36,4 +44,35 @@ export const accountsService = {
     USE_MOCK
       ? mockAccountHandlers.delete(id)
       : api.delete<ApiResponse<null>>(`/accounts/${id}`),
+};
+
+export const shareService = {
+  createInvite: (
+    resourceType: SharedResourceType,
+    resourceId: string
+  ): Promise<ApiResponse<ShareInviteResponse>> =>
+    USE_MOCK
+      ? mockShareHandlers.createInvite(resourceType, resourceId)
+      : api.post<ApiResponse<ShareInviteResponse>>("/share/invite", {
+          resourceType,
+          resourceId,
+        }),
+
+  join: (code: string): Promise<ApiResponse<ShareJoinResponse>> =>
+    USE_MOCK
+      ? mockShareHandlers.join(code)
+      : api.post<ApiResponse<ShareJoinResponse>>("/share/join", { code }),
+
+  leave: (
+    resourceType: SharedResourceType,
+    resourceId: string,
+    targetUserId?: string
+  ): Promise<ApiResponse<null>> =>
+    USE_MOCK
+      ? mockShareHandlers.leave(resourceType, resourceId, targetUserId)
+      : api.post<ApiResponse<null>>("/share/leave", {
+          resourceType,
+          resourceId,
+          targetUserId,
+        }),
 };

@@ -17,6 +17,9 @@ import type {
   RecurringExpense,
   RecurringProcessResult,
   SavingsGoal,
+  ShareInviteResponse,
+  ShareJoinResponse,
+  SharedResourceType,
   SystemStats,
   Transaction,
   UserSettings,
@@ -204,6 +207,31 @@ export const mockTransactionHandlers = {
       }
     }
 
+    // Actualiza meta de ahorro si corresponde (ej. ingreso directo a meta)
+    if (data.goalId) {
+      const goal = goals.find((g) => g.id === data.goalId);
+      if (goal) {
+        if (
+          data.type === "expense" ||
+          data.type === "transfer" ||
+          (data.type === "income" && data.categoryId !== "cat-savings")
+        ) {
+          goal.currentAmount += data.amount;
+        } else if (
+          data.type === "income" &&
+          data.categoryId === "cat-savings"
+        ) {
+          goal.currentAmount = Math.max(0, goal.currentAmount - data.amount);
+        }
+        if (goal.currentAmount >= goal.targetAmount) {
+          goal.status = "completed";
+        } else if (goal.status === "completed") {
+          goal.status = "active";
+        }
+        goal.updatedAt = now;
+      }
+    }
+
     return ok(tx);
   },
 
@@ -243,9 +271,16 @@ export const mockTransactionHandlers = {
     if (oldTx.goalId) {
       const goal = goals.find((g) => g.id === oldTx.goalId);
       if (goal) {
-        if (oldTx.type === "expense" || oldTx.type === "transfer") {
+        if (
+          oldTx.type === "expense" ||
+          oldTx.type === "transfer" ||
+          (oldTx.type === "income" && oldTx.categoryId !== "cat-savings")
+        ) {
           goal.currentAmount = Math.max(0, goal.currentAmount - oldTx.amount);
-        } else if (oldTx.type === "income") {
+        } else if (
+          oldTx.type === "income" &&
+          oldTx.categoryId === "cat-savings"
+        ) {
           goal.currentAmount = Math.max(0, goal.currentAmount + oldTx.amount);
         }
       }
@@ -290,12 +325,20 @@ export const mockTransactionHandlers = {
     if (updatedTx.goalId) {
       const goal = goals.find((g) => g.id === updatedTx.goalId);
       if (goal) {
-        if (updatedTx.type === "expense" || updatedTx.type === "transfer") {
+        if (
+          updatedTx.type === "expense" ||
+          updatedTx.type === "transfer" ||
+          (updatedTx.type === "income" &&
+            updatedTx.categoryId !== "cat-savings")
+        ) {
           goal.currentAmount = Math.max(
             0,
             goal.currentAmount + updatedTx.amount,
           );
-        } else if (updatedTx.type === "income") {
+        } else if (
+          updatedTx.type === "income" &&
+          updatedTx.categoryId === "cat-savings"
+        ) {
           goal.currentAmount = Math.max(
             0,
             goal.currentAmount - updatedTx.amount,
@@ -343,9 +386,16 @@ export const mockTransactionHandlers = {
       if (tx.goalId) {
         const goal = goals.find((g) => g.id === tx.goalId);
         if (goal) {
-          if (tx.type === "expense" || tx.type === "transfer") {
+          if (
+            tx.type === "expense" ||
+            tx.type === "transfer" ||
+            (tx.type === "income" && tx.categoryId !== "cat-savings")
+          ) {
             goal.currentAmount = Math.max(0, goal.currentAmount - tx.amount);
-          } else if (tx.type === "income") {
+          } else if (
+            tx.type === "income" &&
+            tx.categoryId === "cat-savings"
+          ) {
             goal.currentAmount = Math.max(0, goal.currentAmount + tx.amount);
           }
           if (goal.currentAmount >= goal.targetAmount) {
@@ -421,15 +471,17 @@ export const mockGoalHandlers = {
     const gIdx = goals.findIndex((g) => g.id === id);
     if (gIdx === -1) throw new Error(`Meta ${id} no encontrada`);
 
-    const accIdx = accounts.findIndex((a) => a.id === payload.accountId);
-    if (accIdx === -1) throw new Error(`Cuenta no encontrada`);
-
+    const isDirectIncome = Boolean(payload.isDirectIncome || !payload.accountId);
     const now = new Date().toISOString();
     const goal = goals[gIdx];
 
-    // Descontar saldo de la cuenta
-    accounts[accIdx].balance -= payload.amount;
-    accounts[accIdx].updatedAt = now;
+    if (!isDirectIncome && payload.accountId) {
+      const accIdx = accounts.findIndex((a) => a.id === payload.accountId);
+      if (accIdx === -1) throw new Error(`Cuenta no encontrada`);
+      // Descontar saldo de la cuenta
+      accounts[accIdx].balance -= payload.amount;
+      accounts[accIdx].updatedAt = now;
+    }
 
     // Aumentar monto ahorrado en la meta
     goal.currentAmount += payload.amount;
@@ -438,16 +490,20 @@ export const mockGoalHandlers = {
       goal.status = "completed";
     }
 
-    // Registrar transacción de ahorro
+    // Registrar transacción de ahorro o ingreso directo
     const tx: Transaction = {
       id: generateId(),
-      accountId: payload.accountId,
-      categoryId: "cat-savings",
+      accountId: isDirectIncome ? "direct-goal" : (payload.accountId as string),
+      categoryId: isDirectIncome
+        ? (payload.categoryId || "cat-contribution")
+        : "cat-savings",
       goalId: id,
-      type: "expense",
+      type: isDirectIncome ? "income" : "expense",
       amount: payload.amount,
       currency: goal.currency,
-      description: `Aporte a meta: ${goal.name}`,
+      description: isDirectIncome
+        ? `Ingreso directo a meta: ${goal.name}`
+        : `Aporte a meta: ${goal.name}`,
       note: payload.note,
       date: payload.date ?? now,
       createdAt: now,
@@ -513,13 +569,13 @@ export const mockReportHandlers = {
   ): Promise<ApiResponse<MonthlyReport>> {
     await delay(150);
 
-    // Filtra transacciones del mes (excluyendo metas y aportes a ahorros)
+    // Filtra transacciones del mes (excluyendo transferencias internas a metas, pero incluyendo ingresos directos a metas)
     const prefix = `${year}-${String(month).padStart(2, "0")}`;
     const monthTx = transactions.filter(
       (t) =>
         t.date.startsWith(prefix) &&
-        !t.goalId &&
-        t.categoryId !== "cat-savings",
+        t.categoryId !== "cat-savings" &&
+        (!t.goalId || t.type === "income"),
     );
 
     const totalIncome = monthTx
@@ -596,8 +652,8 @@ export const mockReportHandlers = {
     const yearTx = transactions.filter(
       (t) =>
         t.date.startsWith(yearPrefix) &&
-        !t.goalId &&
-        t.categoryId !== "cat-savings",
+        t.categoryId !== "cat-savings" &&
+        (!t.goalId || t.type === "income"),
     );
 
     const totalIncome = yearTx
@@ -913,4 +969,64 @@ let mockUserSettings: UserSettings = {
   userId: "mock-user",
   reminderTime: "09:00",
   updatedAt: new Date().toISOString(),
+};
+
+export const mockShareHandlers = {
+  async createInvite(
+    resourceType: SharedResourceType,
+    resourceId: string,
+  ): Promise<ApiResponse<ShareInviteResponse>> {
+    await delay(100);
+    const code = `UNPO-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    return ok({
+      code,
+      resourceType,
+      resourceId,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    });
+  },
+
+  async join(code: string): Promise<ApiResponse<ShareJoinResponse>> {
+    await delay(150);
+    const firstAcc = accounts[0];
+    if (firstAcc) {
+      firstAcc.isShared = true;
+      firstAcc.isOwner = true;
+      firstAcc.members = [
+        { userId: "mock-owner", displayName: "Tú", role: "owner" },
+        { userId: "mock-guest", displayName: `Invitado (${code})`, role: "editor" },
+      ];
+    }
+    return ok({
+      resourceType: "account",
+      resourceId: firstAcc?.id ?? "acc-1",
+      resourceName: firstAcc?.name ?? "Cuenta Compartida",
+    });
+  },
+
+  async leave(
+    resourceType: SharedResourceType,
+    resourceId: string,
+    targetUserId?: string,
+  ): Promise<ApiResponse<null>> {
+    await delay(100);
+    if (resourceType === "account") {
+      const acc = accounts.find((a) => a.id === resourceId);
+      if (acc) {
+        acc.members = (acc.members || []).filter(
+          (m) => m.userId !== (targetUserId || "mock-guest"),
+        );
+        acc.isShared = (acc.members?.length || 0) > 1;
+      }
+    } else {
+      const goal = goals.find((g) => g.id === resourceId);
+      if (goal) {
+        goal.members = (goal.members || []).filter(
+          (m) => m.userId !== (targetUserId || "mock-guest"),
+        );
+        goal.isShared = (goal.members?.length || 0) > 1;
+      }
+    }
+    return ok(null);
+  },
 };

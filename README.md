@@ -25,6 +25,11 @@ Aplicación móvil multi-usuario de finanzas personales desarrollada con **React
   - **Aviso anticipado (1 día antes)**: notifica en el celular cuando mañana vas a cobrar un ingreso (`💰 Mañana cobras...`) o vence un gasto (`📅 Mañana vence...`).
   - **Aviso el día de vencimiento**: a la hora elegida por el usuario, envía una notificación interactiva (`🔔 ¿Cambió el precio de...?` para variables o `⚡ Hoy se acredita/descuenta...` para fijos) que al tocarse abre directamente el cuadro de confirmación en la app.
   - **Confirmación de ejecución automática**: notifica inmediatamente cuando un movimiento fijo fue acreditado o descontado.
+- **Cuentas y Metas Compartidas (`UNPO-XXXX`)**:
+  - Permite compartir tanto **Cuentas** como **Metas de Ahorro** con otros usuarios mediante **códigos de invitación temporales (`UNPO-XXXX`)** válidos por 24 horas.
+  - **Registro de autoría (`author_name`)**: cada gasto, ingreso, aporte o retiro dentro de una cuenta o meta compartida muestra qué miembro lo realizó (`• 👤 Nombre`).
+  - **Desglose de aportes por miembro**: en las metas compartidas se calcula automáticamente cuánto dinero neto y qué porcentaje del total ahorrado aportó cada participante.
+  - **Control de acceso**: el propietario puede quitar miembros en cualquier momento y los invitados pueden abandonar la cuenta o meta compartida.
 - **Reportes Interactivos y Proyección Financiera (`/(tabs)/reports`)**:
   - **Mensual**: desglose de ingresos y gastos con gráficos interactivos de Torta / Dona (SVG nativo).
   - **Anual**: consolidado anual y evolución mes a mes.
