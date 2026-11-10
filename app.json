@@ -22,9 +22,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#0d0f1a",
+        "backgroundColor": "#EDEEEC",
         "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "package": "com.unpo.finanzas",
