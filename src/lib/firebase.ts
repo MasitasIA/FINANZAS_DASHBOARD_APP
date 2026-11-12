@@ -24,8 +24,12 @@ function createAuth() {
     return firebaseAuth.getAuth(app);
   }
   try {
-    const getReactNativePersistence = (firebaseAuth as any)
-      .getReactNativePersistence;
+    const authModule = firebaseAuth as typeof firebaseAuth & {
+      getReactNativePersistence?: (
+        storage: typeof AsyncStorage,
+      ) => firebaseAuth.Persistence;
+    };
+    const getReactNativePersistence = authModule.getReactNativePersistence;
     if (typeof getReactNativePersistence === "function") {
       return firebaseAuth.initializeAuth(app, {
         persistence: getReactNativePersistence(AsyncStorage),

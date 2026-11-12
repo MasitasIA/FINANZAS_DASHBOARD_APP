@@ -2,7 +2,7 @@
   "expo": {
     "name": "UNPO: Finanzas",
     "slug": "finanzas_dashboard",
-    "version": "1.1.1",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -22,7 +22,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#EDEEEC",
+        "backgroundColor": "#c8102e",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
@@ -46,10 +46,11 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/icon.png",
+          "icon": "./assets/android-icon-monochrome.png",
           "color": "#c8102e"
         }
-      ]
+      ],
+      "expo-status-bar"
     ],
     "experiments": {
       "typedRoutes": true
@@ -59,9 +60,6 @@
         "asyncRoutes": {
           "web": true
         }
-      },
-      "expo-navigation-bar": {
-        "enforceContrast": false
       },
       "eas": {
         "projectId": "855989f3-b75f-4790-8b3a-ce30105e7be6"

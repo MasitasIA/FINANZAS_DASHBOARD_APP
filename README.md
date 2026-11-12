@@ -6,7 +6,7 @@ Aplicación móvil multi-usuario de finanzas personales desarrollada con **React
 
 ## 📱 Vista Previa
 
-![Finanzas Dashboard Demo](assets/DEMO.jpg)
+![Finanzas Dashboard Demo](docs/assets/DEMO.jpg)
 
 ---
 
@@ -39,14 +39,17 @@ Aplicación móvil multi-usuario de finanzas personales desarrollada con **React
   - **Mensual**: desglose de ingresos y gastos con gráficos interactivos de Torta / Dona (SVG nativo).
   - **Anual**: consolidado anual y evolución mes a mes.
   - **🔮 Proyección a Futuro**: curva interactiva a 12 meses, simulador con **3 escenarios** (*Ritmo actual*, *Ahorrador -15% gastos*, *Prudente +15% gastos*), hitos de patrimonio estimado a **+3 meses, +6 meses, +1 año y +2 años**, y fecha estimada (ETA) para alcanzar cada meta de ahorro activa.
-- **Seguridad Multicapa**:
+- **Seguridad Multicapa & Arquitectura Modular**:
   - **Autenticación Firebase (JWT RS256)**: verificación criptográfica de tokens en el Worker contra las claves públicas de Google.
   - **Row-Level Security (RLS)**: aislamiento estricto por `user_id` tanto en consultas del Worker como en los `TRIGGER` de SQLite D1 y validación de propiedad cruzada (`verifyAccountOwnership` / `verifyGoalOwnership`).
   - **Anti-XSS y Sanitización**: limpieza estricta de textos, identificadores, colores, íconos, montos y límite de payload JSON (16 KB), junto con cabeceras HTTP de seguridad (`CSP`, `HSTS`, `X-Content-Type-Options`, `X-Frame-Options`).
   - **Rate Limiting en 2 niveles**: límite por IP pre-autenticación (anti-DDoS) y límite por `userId` autenticado diferenciando lecturas y escrituras.
+  - **Backend Serverless Modular**: Worker refactorizado y desacoplado en módulos especializados (`lib/` para auth, RLS, rate limiting, sanitización; `routes/` para cada dominio: cuentas, transacciones, metas, gastos automáticos, reportes, usuarios y estadísticas).
 - **Actualizaciones OTA Automáticas (`expo-updates` + EAS Workflows)**:
   - Descarga actualizaciones en segundo plano desde el canal `production` y muestra un banner superior (`"Nueva versión descargada y lista — Actualizar ahora"`) sin requerir reinstalar el APK para cambios de JS/UI.
-- **Modo Offline / Mock integrado**: puedes ejecutar y probar toda la aplicación de inmediato sin necesidad de desplegar ningún backend (`EXPO_PUBLIC_USE_MOCK=true`).
+- **Modo Offline / Mock integrado con Tree-Shaking**:
+  - Puedes ejecutar y probar toda la aplicación de inmediato sin desplegar ningún backend (`EXPO_PUBLIC_USE_MOCK=true`).
+  - En compilaciones para producción, el motor mock de más de 1.200 líneas se excluye automáticamente del paquete mediante importaciones dinámicas asíncronas.
 
 ---
 

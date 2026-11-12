@@ -78,11 +78,33 @@ export function RecurringAutoProcessor({ enabled }: { enabled: boolean }) {
   const [realAmountInput, setRealAmountInput] = useState("");
   const [updateBaseAmount, setUpdateBaseAmount] = useState(true);
 
-  // Sincronizar notificaciones móviles programadas cada vez que cambian los movimientos o la hora
+  // Firma compacta de los datos relevantes para notificaciones locales
+  const syncSignature = useMemo(() => {
+    const itemsPart = items
+      .filter((i) => i.isActive)
+      .map((i) => `${i.id}:${i.dueDate}:${i.amount}:${i.name}:${i.isVariable}`)
+      .join("|");
+    const accountsPart = accounts
+      .filter((a) => a.type === "credit")
+      .map((a) => `${a.id}:${a.closingDay}:${a.dueDay}:${a.balance}`)
+      .join("|");
+    return `${reminderTime}#${itemsPart}#${accountsPart}`;
+  }, [items, accounts, reminderTime]);
+
+  const lastSyncSignatureRef = useRef<string>("");
+
+  // Sincronizar notificaciones móviles programadas con debounce de 500ms y evitando re-ejecuciones idénticas
   useEffect(() => {
     if (!enabled || Platform.OS === "web") return;
-    syncRecurringNotifications(items, accounts, reminderTime);
-  }, [enabled, items, accounts, reminderTime]);
+    if (lastSyncSignatureRef.current === syncSignature) return;
+
+    const timer = setTimeout(() => {
+      lastSyncSignatureRef.current = syncSignature;
+      syncRecurringNotifications(items, accounts, reminderTime);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [enabled, syncSignature, items, accounts, reminderTime]);
 
   // Escuchar toques en notificaciones del sistema (barra de estado del celular)
   useEffect(() => {
@@ -97,7 +119,10 @@ export function RecurringAutoProcessor({ enabled }: { enabled: boolean }) {
             | undefined;
 
           if (data?.action === "open_account" && data?.accountId) {
-            router.push(`/accounts/${data.accountId}` as any);
+            router.push({
+              pathname: "/accounts/[id]",
+              params: { id: data.accountId },
+            });
             return;
           }
 
@@ -114,7 +139,7 @@ export function RecurringAutoProcessor({ enabled }: { enabled: boolean }) {
               return;
             }
           }
-          router.push("/recurring" as any);
+          router.push("/recurring");
         },
       );
     } catch {

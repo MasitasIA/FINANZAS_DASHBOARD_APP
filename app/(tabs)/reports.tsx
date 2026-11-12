@@ -719,7 +719,7 @@ export default function ReportsScreen() {
                               Faltan{" "}
                               {formatCurrency(
                                 remaining,
-                                goal.currency as any,
+                                goal.currency,
                               )}
                             </Typography>
                           </View>

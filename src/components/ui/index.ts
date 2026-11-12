@@ -4,3 +4,5 @@ export { Button }      from "./Button";
 export { Card }        from "./Card";
 export { PieChart }    from "./PieChart";
 export { ThemeToggle } from "./ThemeToggle";
+export { ColorPicker } from "./ColorPicker";
+export { IconPicker }  from "./IconPicker";

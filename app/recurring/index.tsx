@@ -12,7 +12,13 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Button, Card, Typography } from "@/components/ui";
+import {
+  Button,
+  Card,
+  ColorPicker,
+  IconPicker,
+  Typography,
+} from "@/components/ui";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useCategories } from "@/hooks/useCategories";
 import {
@@ -32,7 +38,7 @@ import type {
   RecurringItemType,
 } from "@/types";
 import { formatCurrency } from "@/utils/formatters";
-import { accountColors } from "../../tailwind.config";
+import { accountColors } from "@/theme/palettes";
 import { useAppTheme } from "@/theme/useAppTheme";
 
 const RECURRING_ICONS: (keyof typeof MaterialCommunityIcons.glyphMap)[] = [
@@ -1454,57 +1460,20 @@ export default function RecurringExpensesScreen() {
               {/* 5. Ícono y Color */}
               <View className="gap-1.5">
                 <Typography variant="label">Ícono</Typography>
-                <View className="flex-row flex-wrap gap-2">
-                  {RECURRING_ICONS.map((ic) => {
-                    const active = icon === ic;
-                    return (
-                      <Pressable
-                        key={ic}
-                        onPress={() => setIcon(ic)}
-                        className={`w-10 h-10 rounded-2xl items-center justify-center border ${
-                          active
-                            ? "border-primary-600 bg-primary-600/15"
-                            : "border-surface-600 bg-surface-700"
-                        }`}
-                      >
-                        <MaterialCommunityIcons
-                          name={ic}
-                          size={20}
-                          color={
-                            active
-                              ? colors.primary[600]
-                              : colors.text.secondary
-                          }
-                        />
-                      </Pressable>
-                    );
-                  })}
-                </View>
+                <IconPicker
+                  icons={RECURRING_ICONS}
+                  selectedIcon={icon}
+                  onSelectIcon={setIcon}
+                  activeColor={color}
+                />
               </View>
 
               <View className="gap-1.5">
                 <Typography variant="label">Color</Typography>
-                <View className="flex-row flex-wrap gap-2.5">
-                  {accountColors.map((c) => {
-                    const active = color === c;
-                    return (
-                      <Pressable
-                        key={c}
-                        onPress={() => setColor(c)}
-                        className="w-8 h-8 rounded-full items-center justify-center"
-                        style={{ backgroundColor: c }}
-                      >
-                        {active && (
-                          <MaterialCommunityIcons
-                            name="check"
-                            size={16}
-                            color={colors.white}
-                          />
-                        )}
-                      </Pressable>
-                    );
-                  })}
-                </View>
+                <ColorPicker
+                  selectedColor={color}
+                  onSelectColor={setColor}
+                />
               </View>
 
               {editingItem && (

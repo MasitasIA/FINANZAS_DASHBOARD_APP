@@ -12,7 +12,13 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Button, Card, Typography } from "@/components/ui";
+import {
+  Button,
+  Card,
+  ColorPicker,
+  IconPicker,
+  Typography,
+} from "@/components/ui";
 import { ShareResourceModal } from "@/components/shared/ShareModals";
 import {
   useAccount,
@@ -30,7 +36,6 @@ import {
   formatRelativeDate,
 } from "@/utils/formatters";
 import type { Transaction } from "@/types";
-import { accountColors } from "../../tailwind.config";
 import { useAppTheme } from "@/theme/useAppTheme";
 
 const ACCOUNT_ICONS: (keyof typeof MaterialCommunityIcons.glyphMap)[] = [
@@ -618,28 +623,10 @@ export default function AccountDetailScreen() {
                 <Typography variant="label" className="mb-2">
                   Color
                 </Typography>
-                <View className="flex-row flex-wrap gap-3 items-center">
-                  {accountColors.map((c) => (
-                    <Pressable
-                      key={c}
-                      onPress={() => setEditColor(c)}
-                      className="w-8 h-8 rounded-full items-center justify-center"
-                      style={{
-                        backgroundColor: c,
-                        borderWidth: editColor === c ? 3 : 0,
-                        borderColor: colors.text.primary,
-                      }}
-                    >
-                      {editColor === c && (
-                        <MaterialCommunityIcons
-                          name="check"
-                          size={16}
-                          color={colors.white}
-                        />
-                      )}
-                    </Pressable>
-                  ))}
-                </View>
+                <ColorPicker
+                  selectedColor={editColor}
+                  onSelectColor={setEditColor}
+                />
               </View>
 
               {/* Ícono */}
@@ -647,27 +634,12 @@ export default function AccountDetailScreen() {
                 <Typography variant="label" className="mb-2">
                   Ícono
                 </Typography>
-                <View className="flex-row flex-wrap gap-3 items-center">
-                  {ACCOUNT_ICONS.map((ico) => (
-                    <Pressable
-                      key={ico}
-                      onPress={() => setEditIcon(ico)}
-                      className={`w-10 h-10 rounded-2xl items-center justify-center ${
-                        editIcon === ico ? "bg-primary-600" : "bg-surface-700"
-                      }`}
-                    >
-                      <MaterialCommunityIcons
-                        name={ico}
-                        size={20}
-                        color={
-                          editIcon === ico
-                            ? colors.white
-                            : colors.text.secondary
-                        }
-                      />
-                    </Pressable>
-                  ))}
-                </View>
+                <IconPicker
+                  icons={ACCOUNT_ICONS}
+                  selectedIcon={editIcon}
+                  onSelectIcon={setEditIcon}
+                  activeColor={editColor}
+                />
               </View>
 
               <View className="pt-4 gap-2.5">

@@ -1,4 +1,8 @@
+import type { MaterialCommunityIcons } from "@expo/vector-icons";
+
 // ─── Tipos base ─────────────────────────────────────────────────────────────
+
+export type IconName = keyof typeof MaterialCommunityIcons.glyphMap;
 
 export type Currency = "ARS" | "USD" | "EUR";
 
@@ -46,7 +50,7 @@ export interface Account {
   currency: Currency;
   balance: number;
   color: string; // hex color para el avatar
-  icon: string; // nombre del ícono de @expo/vector-icons
+  icon: IconName | string; // nombre del ícono de @expo/vector-icons
   creditLimit?: number; // Límite de crédito asignado (para tarjetas)
   closingDay?: number; // Día del mes en que cierra el resumen (1-31)
   dueDay?: number; // Día del mes en que vence el pago (1-31)
@@ -62,7 +66,7 @@ export interface Account {
 export interface Category {
   id: string;
   name: string;
-  icon: string;
+  icon: IconName | string;
   color: string;
   type: TransactionType;
   isDefault: boolean;
@@ -99,7 +103,7 @@ export interface SavingsGoal {
   currentAmount: number;
   currency: Currency;
   deadline?: string; // ISO 8601
-  icon: string;
+  icon: IconName | string;
   color: string;
   status: GoalStatus;
   isShared?: boolean; // Si la meta está compartida con otros usuarios
@@ -160,7 +164,7 @@ export interface MonthlyBreakdownItem {
 export interface CategorySummary {
   categoryId: string;
   categoryName: string;
-  categoryIcon: string;
+  categoryIcon: IconName | string;
   categoryColor: string;
   total: number;
   transactionCount: number;
@@ -195,7 +199,7 @@ export interface RecurringExpense {
   dueDay: number; // Día del mes (1-31)
   frequency: RecurringFrequency;
   isVariable: boolean; // false = monto fijo (descuenta/acredita solo), true = monto variable (pregunta a la hora del usuario)
-  icon: string;
+  icon: IconName | string;
   color: string;
   isActive: boolean;
   lastPaidDate?: string | null;

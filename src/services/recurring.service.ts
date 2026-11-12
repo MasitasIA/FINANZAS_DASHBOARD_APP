@@ -1,5 +1,4 @@
 import { api } from "@/lib/api";
-import { mockRecurringExpenseHandlers } from "@/lib/mock/handlers";
 import type {
   ApiResponse,
   PaginatedResponse,
@@ -11,68 +10,79 @@ import type {
 } from "@/types";
 
 const USE_MOCK = process.env.EXPO_PUBLIC_USE_MOCK === "true";
+const getMock = () => import("@/lib/mock/handlers");
 
 export const recurringExpensesService = {
-  list: () =>
-    USE_MOCK
-      ? mockRecurringExpenseHandlers.list()
-      : api.get<PaginatedResponse<RecurringExpense>>("/recurring-expenses"),
+  list: async () => {
+    if (USE_MOCK) return (await getMock()).mockRecurringExpenseHandlers.list();
+    return api.get<PaginatedResponse<RecurringExpense>>("/recurring-expenses");
+  },
 
-  create: (
+  create: async (
     payload: Omit<RecurringExpense, "id" | "createdAt" | "updatedAt">,
-  ) =>
-    USE_MOCK
-      ? mockRecurringExpenseHandlers.create(payload)
-      : api.post<ApiResponse<RecurringExpense>>("/recurring-expenses", payload),
+  ) => {
+    if (USE_MOCK)
+      return (await getMock()).mockRecurringExpenseHandlers.create(payload);
+    return api.post<ApiResponse<RecurringExpense>>("/recurring-expenses", payload);
+  },
 
-  update: (
+  update: async (
     id: string,
     payload: Partial<Omit<RecurringExpense, "id" | "createdAt" | "updatedAt">>,
-  ) =>
-    USE_MOCK
-      ? mockRecurringExpenseHandlers.update(id, payload)
-      : api.patch<ApiResponse<RecurringExpense>>(
-          `/recurring-expenses/${id}`,
-          payload,
-        ),
+  ) => {
+    if (USE_MOCK)
+      return (await getMock()).mockRecurringExpenseHandlers.update(id, payload);
+    return api.patch<ApiResponse<RecurringExpense>>(
+      `/recurring-expenses/${id}`,
+      payload,
+    );
+  },
 
-  remove: (id: string) =>
-    USE_MOCK
-      ? mockRecurringExpenseHandlers.remove(id)
-      : api.delete<ApiResponse<null>>(`/recurring-expenses/${id}`),
+  remove: async (id: string) => {
+    if (USE_MOCK)
+      return (await getMock()).mockRecurringExpenseHandlers.remove(id);
+    return api.delete<ApiResponse<null>>(`/recurring-expenses/${id}`);
+  },
 
-  pay: (id: string, payload?: RecurringApplyPayload) =>
-    USE_MOCK
-      ? mockRecurringExpenseHandlers.pay(id, payload)
-      : api.post<ApiResponse<RecurringExpense>>(
-          `/recurring-expenses/${id}/pay`,
-          payload ?? {},
-        ),
+  pay: async (id: string, payload?: RecurringApplyPayload) => {
+    if (USE_MOCK)
+      return (await getMock()).mockRecurringExpenseHandlers.pay(id, payload);
+    return api.post<ApiResponse<RecurringExpense>>(
+      `/recurring-expenses/${id}/pay`,
+      payload ?? {},
+    );
+  },
 
-  skip: (id: string) =>
-    USE_MOCK
-      ? mockRecurringExpenseHandlers.skip(id)
-      : api.post<ApiResponse<RecurringExpense>>(
-          `/recurring-expenses/${id}/skip`,
-          {},
-        ),
+  skip: async (id: string) => {
+    if (USE_MOCK)
+      return (await getMock()).mockRecurringExpenseHandlers.skip(id);
+    return api.post<ApiResponse<RecurringExpense>>(
+      `/recurring-expenses/${id}/skip`,
+      {},
+    );
+  },
 
-  getSettings: () =>
-    USE_MOCK
-      ? mockRecurringExpenseHandlers.getSettings()
-      : api.get<ApiResponse<UserSettings>>("/user-settings"),
+  getSettings: async () => {
+    if (USE_MOCK)
+      return (await getMock()).mockRecurringExpenseHandlers.getSettings();
+    return api.get<ApiResponse<UserSettings>>("/user-settings");
+  },
 
-  updateSettings: (patch: UserSettingsPatch) =>
-    USE_MOCK
-      ? mockRecurringExpenseHandlers.updateSettings(patch)
-      : api.put<ApiResponse<UserSettings>>("/user-settings", patch),
+  updateSettings: async (patch: UserSettingsPatch) => {
+    if (USE_MOCK)
+      return (await getMock()).mockRecurringExpenseHandlers.updateSettings(
+        patch,
+      );
+    return api.put<ApiResponse<UserSettings>>("/user-settings", patch);
+  },
 
-  processDue: (payload?: { localDate?: string; localTime?: string }) =>
-    USE_MOCK
-      ? mockRecurringExpenseHandlers.processDue(payload)
-      : api.post<ApiResponse<RecurringProcessResult>>(
-          "/recurring-expenses/process-due",
-          payload ?? {},
-        ),
+  processDue: async (payload?: { localDate?: string; localTime?: string }) => {
+    if (USE_MOCK)
+      return (await getMock()).mockRecurringExpenseHandlers.processDue(payload);
+    return api.post<ApiResponse<RecurringProcessResult>>(
+      "/recurring-expenses/process-due",
+      payload ?? {},
+    );
+  },
 };
 

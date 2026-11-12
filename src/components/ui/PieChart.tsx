@@ -255,7 +255,9 @@ export function PieChart({
                       onClick: () => handlePressItem(slice),
                       style: { cursor: "pointer" },
                     } as any)
-                  : { onPress: () => handlePressItem(slice) };
+                  : {
+                      onPress: () => handlePressItem(slice),
+                    };
 
               return (
                 <Path

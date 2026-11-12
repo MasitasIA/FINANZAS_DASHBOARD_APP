@@ -1,7 +1,7 @@
 import { Pressable, View } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Card, Typography } from "@/components/ui";
-import type { SavingsGoal } from "@/types";
+import type { IconName, SavingsGoal } from "@/types";
 import { formatCurrency } from "@/utils/formatters";
 
 interface GoalCardProps {
@@ -25,7 +25,7 @@ export function GoalCard({ goal, onPress }: GoalCardProps) {
             style={{ backgroundColor: goal.color + "22" }}
           >
             <MaterialCommunityIcons
-              name={goal.icon as any}
+              name={(goal.icon as IconName) || "piggy-bank"}
               size={20}
               color={goal.color}
             />

@@ -1,78 +1,39 @@
 import { api } from "@/lib/api";
-import {
-  mockAccountHandlers,
-  mockShareHandlers,
-} from "@/lib/mock/handlers";
-import type {
-  Account,
-  ApiResponse,
-  PaginatedResponse,
-  ShareInviteResponse,
-  ShareJoinResponse,
-  SharedResourceType,
-} from "@/types";
+import type { Account, ApiResponse, PaginatedResponse } from "@/types";
 
 const USE_MOCK = process.env.EXPO_PUBLIC_USE_MOCK === "true";
+const getMock = () => import("@/lib/mock/handlers");
 
 export const accountsService = {
-  list: (): Promise<PaginatedResponse<Account>> =>
-    USE_MOCK
-      ? mockAccountHandlers.list()
-      : api.get<PaginatedResponse<Account>>("/accounts"),
+  list: async (): Promise<PaginatedResponse<Account>> => {
+    if (USE_MOCK) return (await getMock()).mockAccountHandlers.list();
+    return api.get<PaginatedResponse<Account>>("/accounts");
+  },
 
-  get: (id: string): Promise<ApiResponse<Account>> =>
-    USE_MOCK
-      ? mockAccountHandlers.get(id)
-      : api.get<ApiResponse<Account>>(`/accounts/${id}`),
+  get: async (id: string): Promise<ApiResponse<Account>> => {
+    if (USE_MOCK) return (await getMock()).mockAccountHandlers.get(id);
+    return api.get<ApiResponse<Account>>(`/accounts/${id}`);
+  },
 
-  create: (
+  create: async (
     data: Omit<Account, "id" | "createdAt" | "updatedAt">
-  ): Promise<ApiResponse<Account>> =>
-    USE_MOCK
-      ? mockAccountHandlers.create(data)
-      : api.post<ApiResponse<Account>>("/accounts", data),
+  ): Promise<ApiResponse<Account>> => {
+    if (USE_MOCK) return (await getMock()).mockAccountHandlers.create(data);
+    return api.post<ApiResponse<Account>>("/accounts", data);
+  },
 
-  update: (
+  update: async (
     id: string,
     data: Partial<Omit<Account, "id" | "createdAt" | "updatedAt">>
-  ): Promise<ApiResponse<Account>> =>
-    USE_MOCK
-      ? mockAccountHandlers.update(id, data)
-      : api.patch<ApiResponse<Account>>(`/accounts/${id}`, data),
+  ): Promise<ApiResponse<Account>> => {
+    if (USE_MOCK) return (await getMock()).mockAccountHandlers.update(id, data);
+    return api.patch<ApiResponse<Account>>(`/accounts/${id}`, data);
+  },
 
-  delete: (id: string): Promise<ApiResponse<null>> =>
-    USE_MOCK
-      ? mockAccountHandlers.delete(id)
-      : api.delete<ApiResponse<null>>(`/accounts/${id}`),
+  delete: async (id: string): Promise<ApiResponse<null>> => {
+    if (USE_MOCK) return (await getMock()).mockAccountHandlers.delete(id);
+    return api.delete<ApiResponse<null>>(`/accounts/${id}`);
+  },
 };
 
-export const shareService = {
-  createInvite: (
-    resourceType: SharedResourceType,
-    resourceId: string
-  ): Promise<ApiResponse<ShareInviteResponse>> =>
-    USE_MOCK
-      ? mockShareHandlers.createInvite(resourceType, resourceId)
-      : api.post<ApiResponse<ShareInviteResponse>>("/share/invite", {
-          resourceType,
-          resourceId,
-        }),
-
-  join: (code: string): Promise<ApiResponse<ShareJoinResponse>> =>
-    USE_MOCK
-      ? mockShareHandlers.join(code)
-      : api.post<ApiResponse<ShareJoinResponse>>("/share/join", { code }),
-
-  leave: (
-    resourceType: SharedResourceType,
-    resourceId: string,
-    targetUserId?: string
-  ): Promise<ApiResponse<null>> =>
-    USE_MOCK
-      ? mockShareHandlers.leave(resourceType, resourceId, targetUserId)
-      : api.post<ApiResponse<null>>("/share/leave", {
-          resourceType,
-          resourceId,
-          targetUserId,
-        }),
-};
+export { shareService } from "./share.service";

@@ -1,7 +1,7 @@
 import { Pressable, View } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Card, Typography } from "@/components/ui";
-import type { Account } from "@/types";
+import type { Account, IconName } from "@/types";
 import { formatCurrency } from "@/utils/formatters";
 
 interface AccountCardProps {
@@ -34,7 +34,7 @@ export function AccountCard({ account, onPress }: AccountCardProps) {
             style={{ backgroundColor: account.color + "22" }}
           >
             <MaterialCommunityIcons
-              name={account.icon as any}
+              name={(account.icon as IconName) || "bank"}
               size={24}
               color={account.color}
             />

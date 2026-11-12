@@ -10,10 +10,16 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Button, Card, Typography } from "@/components/ui";
+import {
+  Button,
+  Card,
+  ColorPicker,
+  IconPicker,
+  Typography,
+} from "@/components/ui";
 import { useCreateGoal } from "@/hooks/useGoals";
 import type { Currency } from "@/types";
-import { accountColors } from "../../tailwind.config";
+import { accountColors } from "@/theme/palettes";
 import { useAppTheme } from "@/theme/useAppTheme";
 
 const CURRENCIES: Currency[] = ["ARS", "USD", "EUR"];
@@ -257,51 +263,22 @@ export default function NewGoalScreen() {
               <Typography variant="label" className="mb-2.5">
                 Color identificativo
               </Typography>
-              <View className="flex-row flex-wrap gap-3 items-center">
-                {accountColors.map((c) => (
-                  <Pressable
-                    key={c}
-                    onPress={() => setColor(c)}
-                    className="w-8 h-8 rounded-full items-center justify-center"
-                    style={{
-                      backgroundColor: c,
-                      borderWidth: color === c ? 3 : 0,
-                      borderColor: colors.text.primary,
-                    }}
-                  >
-                    {color === c && (
-                      <MaterialCommunityIcons
-                        name="check"
-                        size={16}
-                        color={colors.white}
-                      />
-                    )}
-                  </Pressable>
-                ))}
-              </View>
+              <ColorPicker
+                selectedColor={color}
+                onSelectColor={setColor}
+              />
             </View>
 
             <View>
               <Typography variant="label" className="mb-2.5">
                 Ícono representativo
               </Typography>
-              <View className="flex-row flex-wrap gap-3 items-center">
-                {GOAL_ICONS.map((i) => (
-                  <Pressable
-                    key={i}
-                    onPress={() => setIcon(i)}
-                    className={`w-11 h-11 rounded-2xl items-center justify-center ${
-                      icon === i ? "bg-primary-600" : "bg-surface-700"
-                    }`}
-                  >
-                    <MaterialCommunityIcons
-                      name={i}
-                      size={22}
-                      color={icon === i ? colors.white : colors.text.secondary}
-                    />
-                  </Pressable>
-                ))}
-              </View>
+              <IconPicker
+                icons={GOAL_ICONS}
+                selectedIcon={icon}
+                onSelectIcon={setIcon}
+                activeColor={color}
+              />
             </View>
           </Card>
 

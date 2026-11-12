@@ -75,7 +75,26 @@ finanzas_dashboard/
 │
 ├── worker/
 │   ├── wrangler.toml             ← Cloudflare Worker & D1 binding config
-│   └── src/index.ts              ← Serverless REST API: RS256 Auth, RLS, Rate Limiting, Anti-XSS
+│   └── src/
+│       ├── index.ts              ← Entrypoint: CORS, IP/User Rate Limit, Auth & Router Dispatch
+│       ├── types.ts              ← Env, AuthenticatedUser & Worker DB interfaces
+│       ├── lib/                  ← Cross-cutting modules
+│       │   ├── response.ts       ← SECURITY_HEADERS, json(), error(), success()
+│       │   ├── rate-limit.ts     ← checkRateLimit & window configs
+│       │   ├── sanitize.ts       ← Anti-XSS, amounts, dates, times, theme & parseSafeJsonBody
+│       │   ├── auth.ts           ← Firebase ID Token (Web Crypto RS256 + Google JWKS)
+│       │   ├── rls.ts            ← Row-Level Security, ownership verifications & schema bootstrap
+│       │   └── formatters.ts     ← Snake <-> Camel mappers & date math
+│       └── routes/               ← Domain endpoints
+│           ├── accounts.ts       ← /accounts
+│           ├── categories.ts     ← /categories
+│           ├── transactions.ts   ← /transactions
+│           ├── goals.ts          ← /goals, /contribute, /withdraw
+│           ├── share.ts          ← /share/invite, /share/join, /share/leave
+│           ├── reports.ts        ← /reports/monthly, /reports/annual
+│           ├── user-settings.ts  ← /user-settings
+│           ├── recurring.ts      ← /recurring-expenses, /process-due, /pay, /skip
+│           └── system-stats.ts   ← /stats
 │
 └── src/                          ← All non-route code lives here
     ├── types/index.ts            ← Domain types (Account, Transaction, SavingsGoal, RecurringExpense, UserSettings, SystemStats, etc.)
@@ -86,20 +105,24 @@ finanzas_dashboard/
     │   └── mock/
     │       ├── db.ts             ← In-memory seed data
     │       └── handlers.ts       ← Mock implementations of every API endpoint
-    ├── services/                 ← Data access layer (calls api.ts OR mock handlers)
-    │   ├── accounts.service.ts   ← Also contains shareService (/share/invite, /share/join, /share/leave)
+    ├── services/                 ← Data access layer (calls api.ts OR dynamic mock handlers)
+    │   ├── accounts.service.ts
     │   ├── categories.service.ts
     │   ├── transactions.service.ts
-    │   ├── goals.service.ts      ← Also contains reportsService & statsService
+    │   ├── goals.service.ts
+    │   ├── reports.service.ts    ← Monthly, Annual and System Stats API
+    │   ├── share.service.ts      ← /share/invite, /share/join, /share/leave
     │   └── recurring.service.ts  ← Recurring expenses/incomes + user_settings + process-due
     ├── hooks/                    ← TanStack Query hooks (queries + mutations)
-    │   ├── useAccounts.ts        ← Also contains useCreateShareInvite, useJoinSharedResource, useLeaveSharedResource
+    │   ├── useAccounts.ts
     │   ├── useCategories.ts
     │   ├── useTransactions.ts
-    │   ├── useGoals.ts           ← Also contains useMonthlyReport, useAnnualReport & useSystemStats
+    │   ├── useGoals.ts
+    │   ├── useReports.ts         ← useMonthlyReport, useAnnualReport, useSystemStats
+    │   ├── useShare.ts           ← useCreateShareInvite, useJoinSharedResource, useLeaveSharedResource
     │   └── useRecurringExpenses.ts ← Hooks for recurring items, user settings & auto-processing
     ├── theme/                    ← Light/Dark theming (global styles)
-    │   ├── palettes.js           ← SINGLE source of truth for colors (light + dark) → CSS vars; consumed by tailwind.config.js
+    │   ├── palettes.js           ← SINGLE source of truth for colors (light + dark + accountColors) → CSS vars
     │   ├── palettes.d.ts         ← Types for palettes.js
     │   ├── ThemeProvider.tsx     ← Injects `--color-*` vars (nativewind `vars()`), colorScheme, web <html> vars; also ThemeSync (D1 → store)
     │   └── useAppTheme.ts        ← useAppTheme() (mode/isDark/colors hex) & useSetTheme() (optimistic + PUT /user-settings)
@@ -111,6 +134,8 @@ finanzas_dashboard/
     │   │   ├── Typography.tsx    ← variant prop: h1/h2/h3/body/caption/label
     │   │   ├── Button.tsx        ← variant: primary/secondary/ghost/danger
     │   │   ├── Card.tsx          ← Surface with rounded corners (extends ViewProps)
+    │   │   ├── ColorPicker.tsx   ← Interactive color swatch selector
+    │   │   ├── IconPicker.tsx    ← Typed MaterialCommunityIcons selector
     │   │   ├── PieChart.tsx      ← Interactive SVG donut/pie chart
     │   │   ├── ThemeToggle.tsx   ← Dark-mode switch (variant: row | icon)
     │   │   └── index.ts          ← Barrel export
@@ -119,7 +144,7 @@ finanzas_dashboard/
     │   ├── shared/ShareModals.tsx ← JoinWithCodeModal & ShareResourceModal (UNPO-XXXX invites)
     │   └── recurring/RecurringAutoProcessor.tsx ← Background/foreground processor + variable price prompt modal
     └── utils/
-        └── formatters.ts         ← formatCurrency, formatDate, formatRelativeDate
+        └── formatters.ts         ← formatCurrency, formatDate, formatRelativeDate, parseSafeDate
 ```
 
 ---

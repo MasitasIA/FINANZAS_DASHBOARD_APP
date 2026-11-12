@@ -122,7 +122,7 @@ export default function RootLayout() {
     if (Platform.OS !== "android") return;
 
     NavigationBar.setHidden(true);
-    NavigationBar.setStyle("dark");
+    NavigationBar.setStyle(isDark ? "light" : "dark");
 
     const appStateSub = AppState.addEventListener(
       "change",
@@ -136,7 +136,7 @@ export default function RootLayout() {
     return () => {
       appStateSub.remove();
     };
-  }, []);
+  }, [isDark]);
 
   if (!loaded || !authReady || !themeHydrated) {
     return (
@@ -155,7 +155,7 @@ export default function RootLayout() {
           enabled={USE_MOCK || !isFirebaseConfigured || Boolean(user)}
         />
         <StatusBar style={isDark ? "light" : "dark"} />
-        <NavigationBar hidden style="light" />
+        <NavigationBar hidden style={isDark ? "light" : "dark"} />
         <RecurringAutoProcessor
           enabled={USE_MOCK || !isFirebaseConfigured || Boolean(user)}
         />

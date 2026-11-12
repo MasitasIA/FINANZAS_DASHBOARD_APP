@@ -1,10 +1,8 @@
 import { api } from "@/lib/api";
-import {
-  mockTransactionHandlers,
-} from "@/lib/mock/handlers";
 import type { ApiResponse, PaginatedResponse, Transaction } from "@/types";
 
 const USE_MOCK = process.env.EXPO_PUBLIC_USE_MOCK === "true";
+const getMock = () => import("@/lib/mock/handlers");
 
 export interface TransactionFilters {
   accountId?:  string;
@@ -18,8 +16,10 @@ export interface TransactionFilters {
 }
 
 export const transactionsService = {
-  list: (filters: TransactionFilters = {}): Promise<PaginatedResponse<Transaction>> => {
-    if (USE_MOCK) return mockTransactionHandlers.list(filters);
+  list: async (
+    filters: TransactionFilters = {}
+  ): Promise<PaginatedResponse<Transaction>> => {
+    if (USE_MOCK) return (await getMock()).mockTransactionHandlers.list(filters);
 
     const params = new URLSearchParams();
     Object.entries(filters).forEach(([k, v]) => {
@@ -31,28 +31,28 @@ export const transactionsService = {
     );
   },
 
-  get: (id: string): Promise<ApiResponse<Transaction>> =>
-    USE_MOCK
-      ? mockTransactionHandlers.get(id)
-      : api.get<ApiResponse<Transaction>>(`/transactions/${id}`),
+  get: async (id: string): Promise<ApiResponse<Transaction>> => {
+    if (USE_MOCK) return (await getMock()).mockTransactionHandlers.get(id);
+    return api.get<ApiResponse<Transaction>>(`/transactions/${id}`);
+  },
 
-  create: (
+  create: async (
     data: Omit<Transaction, "id" | "createdAt" | "updatedAt">
-  ): Promise<ApiResponse<Transaction>> =>
-    USE_MOCK
-      ? mockTransactionHandlers.create(data)
-      : api.post<ApiResponse<Transaction>>("/transactions", data),
+  ): Promise<ApiResponse<Transaction>> => {
+    if (USE_MOCK) return (await getMock()).mockTransactionHandlers.create(data);
+    return api.post<ApiResponse<Transaction>>("/transactions", data);
+  },
 
-  update: (
+  update: async (
     id: string,
     data: Partial<Omit<Transaction, "id" | "createdAt" | "updatedAt">>
-  ): Promise<ApiResponse<Transaction>> =>
-    USE_MOCK
-      ? mockTransactionHandlers.update(id, data)
-      : api.patch<ApiResponse<Transaction>>(`/transactions/${id}`, data),
+  ): Promise<ApiResponse<Transaction>> => {
+    if (USE_MOCK) return (await getMock()).mockTransactionHandlers.update(id, data);
+    return api.patch<ApiResponse<Transaction>>(`/transactions/${id}`, data);
+  },
 
-  delete: (id: string): Promise<ApiResponse<null>> =>
-    USE_MOCK
-      ? mockTransactionHandlers.delete(id)
-      : api.delete<ApiResponse<null>>(`/transactions/${id}`),
+  delete: async (id: string): Promise<ApiResponse<null>> => {
+    if (USE_MOCK) return (await getMock()).mockTransactionHandlers.delete(id);
+    return api.delete<ApiResponse<null>>(`/transactions/${id}`);
+  },
 };

@@ -16,7 +16,7 @@ import { useCreateTransaction } from "@/hooks/useTransactions";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useGoals } from "@/hooks/useGoals";
 import { useCategories } from "@/hooks/useCategories";
-import type { TransactionType, Currency } from "@/types";
+import type { TransactionType, Currency, IconName } from "@/types";
 import { useAppTheme } from "@/theme/useAppTheme";
 
 export default function NewTransactionScreen() {
@@ -444,7 +444,7 @@ export default function NewTransactionScreen() {
                       >
                         <View className="flex-row items-center gap-2">
                           <MaterialCommunityIcons
-                            name={(goal.icon as any) || "piggy-bank"}
+                            name={(goal.icon as IconName) || "piggy-bank"}
                             size={18}
                             color={isSelected ? colors.white : goal.color}
                           />

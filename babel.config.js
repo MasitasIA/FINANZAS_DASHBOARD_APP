@@ -16,8 +16,6 @@ module.exports = function (api) {
           extensions: [".ios.js", ".android.js", ".web.js", ".js", ".ts", ".tsx", ".web.ts", ".web.tsx", ".json"],
         },
       ],
-      // ⚠️ react-native-reanimated/plugin MUST be last
-      "react-native-reanimated/plugin",
     ],
   };
 };

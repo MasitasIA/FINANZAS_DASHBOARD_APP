@@ -26,4 +26,5 @@ export const themeVars: {
   dark: Record<string, string>;
 };
 export function buildTailwindColors(): Record<string, unknown>;
+export const accountColors: string[];
 

@@ -2,21 +2,12 @@ const {
   lightColors,
   themeVars,
   buildTailwindColors,
+  accountColors,
 } = require("./src/theme/palettes");
 
 // Paleta modo claro (por defecto). Se mantiene exportada por compatibilidad:
 // para colores que cambian con el tema usa `useAppTheme().colors` (src/theme/useAppTheme.ts).
 const colors = lightColors;
-
-const accountColors = [
-  colors.primary[500],
-  colors.success[500],
-  colors.accent.cyan,
-  colors.warning[500],
-  colors.accent.purple,
-  colors.accent.pink,
-  colors.primary[600],
-];
 
 /** @type {import('tailwindcss').Config} */
 module.exports = {

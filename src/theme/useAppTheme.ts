@@ -1,12 +1,14 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
-import { palettes, type ThemeColors } from "./palettes";
+import { palettes, accountColors, type ThemeColors } from "./palettes";
 import {
   recurringExpenseKeys,
   useUpdateUserSettings,
 } from "@/hooks/useRecurringExpenses";
 import { useThemeStore } from "@/store/theme.store";
 import type { ThemeMode, UserSettings } from "@/types";
+
+export { accountColors };
 
 export interface AppTheme {
   mode: ThemeMode;

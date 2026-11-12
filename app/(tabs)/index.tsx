@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -21,6 +22,7 @@ import { useRecurringExpenses } from "@/hooks/useRecurringExpenses";
 import { useTransactions } from "@/hooks/useTransactions";
 import { auth } from "@/lib/firebase";
 import { formatCurrency } from "@/utils/formatters";
+import type { Currency } from "@/types";
 import appConfig from "../../app.json";
 import { useAppTheme } from "@/theme/useAppTheme";
 
@@ -95,7 +97,10 @@ export default function DashboardScreen() {
     }
   }
 
-  const accounts = useMemo(() => accountsData?.data ?? [], [accountsData?.data]);
+  const accounts = useMemo(
+    () => accountsData?.data ?? [],
+    [accountsData?.data],
+  );
   const goals = useMemo(() => goalsData?.data ?? [], [goalsData?.data]);
   const recurringExpenses = useMemo(
     () => recurringData?.data ?? [],
@@ -209,8 +214,8 @@ export default function DashboardScreen() {
       ...Object.keys(balancesByCurrency),
       ...Object.keys(goalsByCurrency),
     ]),
-  );
-  const displayCurrencies =
+  ) as Currency[];
+  const displayCurrencies: Currency[] =
     activeCurrencies.length > 0 ? activeCurrencies : ["ARS"];
 
   return (
@@ -304,17 +309,17 @@ export default function DashboardScreen() {
               >
                 {formatCurrency(
                   balancesByCurrency[displayCurrencies[0]] ?? 0,
-                  displayCurrencies[0] as any,
+                  displayCurrencies[0],
                 )}
               </Typography>
               <Typography variant="caption" muted className="mt-1">
                 {goalsByCurrency[displayCurrencies[0]] > 0 &&
                 debtByCurrency[displayCurrencies[0]] > 0
-                  ? `+${formatCurrency(goalsByCurrency[displayCurrencies[0]], displayCurrencies[0] as any)} en metas • -${formatCurrency(debtByCurrency[displayCurrencies[0]], displayCurrencies[0] as any)} en saldos negativos/deuda`
+                  ? `+${formatCurrency(goalsByCurrency[displayCurrencies[0]], displayCurrencies[0])} en metas • -${formatCurrency(debtByCurrency[displayCurrencies[0]], displayCurrencies[0])} en saldos negativos/deuda`
                   : goalsByCurrency[displayCurrencies[0]] > 0
-                    ? `Incluye ${formatCurrency(goalsByCurrency[displayCurrencies[0]], displayCurrencies[0] as any)} en metas de ahorro`
+                    ? `Incluye ${formatCurrency(goalsByCurrency[displayCurrencies[0]], displayCurrencies[0])} en metas de ahorro`
                     : debtByCurrency[displayCurrencies[0]] > 0
-                      ? `Resta -${formatCurrency(debtByCurrency[displayCurrencies[0]], displayCurrencies[0] as any)} de saldos negativos/deuda`
+                      ? `Resta -${formatCurrency(debtByCurrency[displayCurrencies[0]], displayCurrencies[0])} de saldos negativos/deuda`
                       : `Moneda: ${displayCurrencies[0]}`}
               </Typography>
             </View>
@@ -354,7 +359,7 @@ export default function DashboardScreen() {
                         bal >= 0 ? "text-text-primary" : "text-danger-500"
                       }`}
                     >
-                      {formatCurrency(bal, curr as any)}
+                      {formatCurrency(bal, curr)}
                     </Typography>
                     {(saved > 0 || debt > 0) && (
                       <Typography
@@ -363,12 +368,10 @@ export default function DashboardScreen() {
                         className="text-[10px] mt-0.5"
                       >
                         {saved > 0
-                          ? `+${formatCurrency(saved, curr as any)} metas`
+                          ? `+${formatCurrency(saved, curr)} metas`
                           : ""}
                         {saved > 0 && debt > 0 ? " • " : ""}
-                        {debt > 0
-                          ? `-${formatCurrency(debt, curr as any)} deuda`
-                          : ""}
+                        {debt > 0 ? `-${formatCurrency(debt, curr)} deuda` : ""}
                       </Typography>
                     )}
                   </View>
@@ -451,7 +454,7 @@ export default function DashboardScreen() {
             <Typography
               variant="caption"
               className="text-primary-600 font-semibold"
-              onPress={() => router.push("/recurring" as any)}
+              onPress={() => router.push("/recurring")}
             >
               Gestionar
             </Typography>
@@ -460,7 +463,7 @@ export default function DashboardScreen() {
           {loadingRecurring ? (
             <ActivityIndicator color={colors.primary[500]} />
           ) : recurringExpenses.filter((r) => r.isActive).length === 0 ? (
-            <Pressable onPress={() => router.push("/recurring" as any)}>
+            <Pressable onPress={() => router.push("/recurring")}>
               <Card className="flex-row items-center justify-between p-3.5">
                 <View className="flex-row items-center gap-3 flex-1 mr-2">
                   <View className="w-9 h-9 rounded-2xl bg-primary-600/15 items-center justify-center">
@@ -504,7 +507,7 @@ export default function DashboardScreen() {
                   return (
                     <Pressable
                       key={item.id}
-                      onPress={() => router.push("/recurring" as any)}
+                      onPress={() => router.push("/recurring")}
                     >
                       <Card
                         variant={isIncome ? "income" : "expense"}
@@ -608,14 +611,12 @@ export default function DashboardScreen() {
           >
             {/* Cabecera del modal */}
             <View className="flex-row items-center justify-between mb-4">
-              <View className="flex-row items-center gap-2.5">
-                <View className="w-9 h-9 rounded-2xl bg-primary-600/15 items-center justify-center">
-                  <MaterialCommunityIcons
-                    name="shield-check-outline"
-                    size={20}
-                    color={colors.primary[600]}
-                  />
-                </View>
+              <View className="flex-row items-center gap-3">
+                <Image
+                  source={require("../../assets/icon.png")}
+                  style={{ width: 40, height: 40 }}
+                  resizeMode="contain"
+                />
                 <View>
                   <Typography variant="h3">{appName}</Typography>
                   <Typography variant="caption" muted className="text-[11px]">

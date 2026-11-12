@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -140,13 +141,11 @@ export default function LoginScreen() {
         >
           {/* ── Encabezado / Branding ──────────────────────────── */}
           <View className="items-center gap-2">
-            <View className="w-16 h-16 rounded-3xl bg-primary-600 items-center justify-center shadow-sm">
-              <MaterialCommunityIcons
-                name="wallet-outline"
-                size={34}
-                color={colors.white}
-              />
-            </View>
+            <Image
+              source={require("../assets/icon.png")}
+              style={{ width: 64, height: 64 }}
+              resizeMode="contain"
+            />
             <Typography variant="h1" className="mt-2 text-center">
               UNPO: Finanzas
             </Typography>

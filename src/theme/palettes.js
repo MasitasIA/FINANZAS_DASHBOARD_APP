@@ -167,11 +167,22 @@ function buildTailwindColors() {
   return result;
 }
 
+const accountColors = [
+  lightColors.primary[500],
+  lightColors.success[500],
+  lightColors.accent.cyan,
+  lightColors.warning[500],
+  lightColors.accent.purple,
+  lightColors.accent.pink,
+  lightColors.primary[600],
+];
+
 module.exports = {
   lightColors,
   darkColors,
   palettes,
   themeVars,
   buildTailwindColors,
+  accountColors,
 };
 
