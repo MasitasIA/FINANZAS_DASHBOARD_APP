@@ -13,11 +13,13 @@ import { router, useLocalSearchParams } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Button, Card, Typography } from "@/components/ui";
 import { useCreateTransaction } from "@/hooks/useTransactions";
+import { useCreateInstallment } from "@/hooks/useInstallments";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useGoals } from "@/hooks/useGoals";
 import { useCategories } from "@/hooks/useCategories";
 import type { TransactionType, Currency, IconName } from "@/types";
 import { useAppTheme } from "@/theme/useAppTheme";
+import { formatCurrency } from "@/utils/formatters";
 
 export default function NewTransactionScreen() {
   const { colors } = useAppTheme();
@@ -40,6 +42,8 @@ export default function NewTransactionScreen() {
   const [selectedToAccountId, setSelectedToAccountId] = useState<string | null>(
     params.toAccountId ?? null,
   );
+  const [installmentsCount, setInstallmentsCount] = useState<number>(1);
+  const [cashPrice, setCashPrice] = useState<string>("");
 
   const { data: accountsData } = useAccounts();
   const accounts = accountsData?.data ?? [];
@@ -79,7 +83,10 @@ export default function NewTransactionScreen() {
   const activeToAccountId =
     selectedToAccountId ?? params.toAccountId ?? defaultDestination?.id ?? null;
 
+  const isCreditCard = type === "expense" && originAccount?.type === "credit";
   const { mutate, isPending } = useCreateTransaction();
+  const createInstallmentMutation = useCreateInstallment();
+  const isActionPending = isPending || createInstallmentMutation.isPending;
 
   const toAccount = accounts.find((a) => a.id === activeToAccountId);
   const currentCategories = allCategories.filter(
@@ -123,6 +130,26 @@ export default function NewTransactionScreen() {
       : trimmedDetail
         ? `${categoryName} - ${trimmedDetail}`
         : categoryName;
+
+    if (isCreditCard && installmentsCount > 1) {
+      const parsedCash = cashPrice
+        ? parseFloat(cashPrice.replace(",", "."))
+        : parsedAmount;
+      createInstallmentMutation.mutate(
+        {
+          accountId: activeAccountId,
+          description: finalDescription,
+          totalAmount: parsedAmount,
+          cashPrice: isNaN(parsedCash) ? parsedAmount : parsedCash,
+          installmentsCount,
+          categoryId: selectedCat.id,
+        },
+        {
+          onSuccess: () => router.back(),
+        },
+      );
+      return;
+    }
 
     mutate(
       {
@@ -203,6 +230,101 @@ export default function NewTransactionScreen() {
               style={{ fontFamily: "Inter_700Bold" }}
             />
           </Card>
+
+          {/* ── Plan de cuotas (solo para Tarjeta de Crédito) ──── */}
+          {isCreditCard && (
+            <Card className="gap-3">
+              <View className="flex-row items-center justify-between">
+                <View className="flex-row items-center gap-2">
+                  <MaterialCommunityIcons
+                    name="credit-card-clock"
+                    size={18}
+                    color={colors.primary[500]}
+                  />
+                  <Typography variant="label">Plan de cuotas</Typography>
+                </View>
+                <Typography
+                  variant="caption"
+                  className="font-semibold text-primary-600"
+                >
+                  {installmentsCount === 1
+                    ? "1 pago (contado)"
+                    : !isNaN(parsedAmount) && parsedAmount > 0
+                      ? `${installmentsCount} cuotas de ${formatCurrency(
+                          parsedAmount / installmentsCount,
+                          activeCurrency,
+                        )}`
+                      : `${installmentsCount} cuotas`}
+                </Typography>
+              </View>
+
+              <View className="flex-row flex-wrap gap-2">
+                {[1, 3, 6, 9, 12, 18, 24].map((count) => {
+                  const isSel = installmentsCount === count;
+                  return (
+                    <Pressable
+                      key={count}
+                      onPress={() => setInstallmentsCount(count)}
+                      className={`px-3 py-1.5 rounded-xl border ${
+                        isSel
+                          ? "bg-primary-600 border-primary-600"
+                          : "bg-surface-700/60 border-transparent active:bg-surface-600"
+                      }`}
+                    >
+                      <Typography
+                        className={`text-xs font-semibold ${
+                          isSel ? "text-white" : "text-text-primary"
+                        }`}
+                      >
+                        {count === 1 ? "1 pago" : `${count} cuotas`}
+                      </Typography>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              {installmentsCount > 1 && (
+                <View className="pt-2 border-t border-surface-600/40 gap-2">
+                  <Typography variant="label" className="text-xs">
+                    Precio de contado (opcional para cálculo de recargo)
+                  </Typography>
+                  <TextInput
+                    value={cashPrice}
+                    onChangeText={setCashPrice}
+                    placeholder="Mismo importe si es sin interés"
+                    placeholderTextColor={colors.text.muted}
+                    keyboardType="decimal-pad"
+                    className="bg-surface-700/60 p-2.5 rounded-xl text-text-primary text-sm font-semibold"
+                  />
+                  {Boolean(
+                    cashPrice &&
+                      !isNaN(parseFloat(cashPrice.replace(",", "."))) &&
+                      parseFloat(cashPrice.replace(",", ".")) < parsedAmount,
+                  ) && (
+                    <View className="flex-row items-center gap-1.5 bg-warning-500/10 px-2.5 py-1.5 rounded-lg border border-warning-500/20">
+                      <MaterialCommunityIcons
+                        name="alert-circle-outline"
+                        size={14}
+                        color="#f79009"
+                      />
+                      <Typography className="text-xs text-warning-500 font-medium">
+                        {`Recargo financiero: +${formatCurrency(
+                          parsedAmount -
+                            parseFloat(cashPrice.replace(",", ".")),
+                          activeCurrency,
+                        )} (${(
+                          ((parsedAmount -
+                            parseFloat(cashPrice.replace(",", "."))) /
+                            parseFloat(cashPrice.replace(",", "."))) *
+                          100
+                        ).toFixed(1)}%)`}
+                      </Typography>
+                    </View>
+                  )}
+                </View>
+              )}
+            </Card>
+          )}
 
           {/* ── Categoría descriptiva ───────────────────────── */}
           <Card className="gap-3">
@@ -483,7 +605,7 @@ export default function NewTransactionScreen() {
                     : "Guardar ingreso"
             }
             onPress={handleSubmit}
-            loading={isPending}
+            loading={isActionPending}
             disabled={isSubmitDisabled}
           />
         </ScrollView>

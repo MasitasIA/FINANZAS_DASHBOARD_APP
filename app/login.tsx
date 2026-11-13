@@ -141,11 +141,35 @@ export default function LoginScreen() {
         >
           {/* ── Encabezado / Branding ──────────────────────────── */}
           <View className="items-center gap-2">
-            <Image
-              source={require("../assets/icon.png")}
-              style={{ width: 64, height: 64 }}
-              resizeMode="contain"
-            />
+            <View
+              className="w-16 h-16 rounded-2xl overflow-hidden shrink-0 self-center relative"
+              style={{
+                width: 64,
+                height: 64,
+                minWidth: 64,
+                minHeight: 64,
+                maxWidth: 64,
+                maxHeight: 64,
+                borderRadius: 16,
+                overflow: "hidden",
+                position: "relative",
+              }}
+            >
+              <Image
+                source={require("../assets/icon.png")}
+                className="w-16 h-16 rounded-2xl"
+                style={{
+                  width: 64,
+                  height: 64,
+                  minWidth: 64,
+                  minHeight: 64,
+                  maxWidth: 64,
+                  maxHeight: 64,
+                  position: "relative",
+                }}
+                resizeMode="contain"
+              />
+            </View>
             <Typography variant="h1" className="mt-2 text-center">
               UNPO: Finanzas
             </Typography>

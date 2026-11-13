@@ -2,12 +2,12 @@
   "expo": {
     "name": "UNPO: Finanzas",
     "slug": "finanzas_dashboard",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "scheme": "finanzas",
-    "runtimeVersion": "1.0.0",
+    "runtimeVersion": "1.1.0",
     "updates": {
       "url": "https://u.expo.dev/855989f3-b75f-4790-8b3a-ce30105e7be6",
       "checkAutomatically": "ON_LOAD",
@@ -50,7 +50,8 @@
           "color": "#c8102e"
         }
       ],
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true

@@ -60,6 +60,41 @@ export async function initializeNotifications(): Promise<boolean> {
 }
 
 /**
+ * Envía una notificación inmediata de alerta presupuestaria al alcanzar 80% o 100%
+ */
+export async function notifyBudgetAlert(
+  categoryName: string,
+  percentage: number,
+  spent: number,
+  limit: number,
+  currency: string = "ARS",
+): Promise<void> {
+  if (Platform.OS === "web") return;
+
+  const isExceeded = percentage >= 100;
+  const title = isExceeded
+    ? `⚠️ Presupuesto excedido: ${categoryName}`
+    : `⚠️ Alerta de presupuesto (80%): ${categoryName}`;
+  const body = isExceeded
+    ? `Has gastado ${formatCurrency(spent, currency as any)} de tu límite de ${formatCurrency(limit, currency as any)} (${percentage}%).`
+    : `Has alcanzado el ${percentage}% de tu presupuesto en ${categoryName} (${formatCurrency(spent, currency as any)} / ${formatCurrency(limit, currency as any)}).`;
+
+  try {
+    await scheduleNotificationAsync({
+      content: {
+        title,
+        body,
+        sound: "default",
+        data: { type: "budget_alert", categoryName },
+      },
+      trigger: null, // Inmediata
+    });
+  } catch {
+    // Permisos no otorgados o no disponible
+  }
+}
+
+/**
  * Verifica el estado actual del permiso de notificaciones en el dispositivo.
  */
 export async function checkNotificationPermissionStatus(): Promise<

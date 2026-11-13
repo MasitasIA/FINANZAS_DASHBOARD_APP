@@ -1,6 +1,6 @@
 {
   "name": "finanzas_dashboard",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "main": "expo-router/entry",
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
@@ -8,17 +8,24 @@
     "@expo/vector-icons": "^15.0.2",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@tanstack/react-query": "^5.104.5",
+    "@types/jest": "30.0.0",
     "expo": "~58.0.25",
     "expo-constants": "~58.0.13",
+    "expo-document-picker": "~58.0.5",
+    "expo-file-system": "~58.0.13",
     "expo-font": "~58.0.10",
     "expo-linking": "~58.0.17",
     "expo-navigation-bar": "~58.0.4",
+    "expo-network": "~58.0.5",
     "expo-notifications": "~58.1.9",
     "expo-router": "~58.0.31",
+    "expo-sharing": "~58.0.23",
     "expo-splash-screen": "~58.0.14",
     "expo-status-bar": "~58.0.5",
     "expo-updates": "~58.0.22",
     "firebase": "^13.2.0",
+    "jest": "~30.5.2",
+    "jest-expo": "~58.0.14",
     "nativewind": "^4.2.7",
     "react": "19.3.0",
     "react-dom": "19.3.0",
@@ -44,10 +51,14 @@
     "ios": "expo start --ios",
     "web": "expo start --web --clear",
     "lint": "expo lint",
+    "test": "jest",
     "worker:dev": "npx wrangler dev --config worker/wrangler.toml",
     "worker:deploy": "npx wrangler deploy --config worker/wrangler.toml",
     "d1:init": "npx wrangler d1 execute finanzas-db --remote --file=./schema.sql --config worker/wrangler.toml",
     "d1:init:local": "npx wrangler d1 execute finanzas-db --local --file=./schema.sql --config worker/wrangler.toml"
+  },
+  "jest": {
+    "preset": "jest-expo"
   },
   "private": true
 }

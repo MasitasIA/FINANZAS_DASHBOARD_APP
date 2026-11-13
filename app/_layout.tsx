@@ -28,7 +28,7 @@ import {
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { RecurringAutoProcessor } from "@/components/recurring/RecurringAutoProcessor";
-import { Typography } from "@/components/ui";
+import { OfflineBanner, Typography } from "@/components/ui";
 import { auth, isFirebaseConfigured } from "@/lib/firebase";
 
 SplashScreen.preventAutoHideAsync();
@@ -156,6 +156,7 @@ export default function RootLayout() {
         />
         <StatusBar style={isDark ? "light" : "dark"} />
         <NavigationBar hidden style={isDark ? "light" : "dark"} />
+        <OfflineBanner />
         <RecurringAutoProcessor
           enabled={USE_MOCK || !isFirebaseConfigured || Boolean(user)}
         />

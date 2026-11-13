@@ -6,3 +6,4 @@ export { PieChart }    from "./PieChart";
 export { ThemeToggle } from "./ThemeToggle";
 export { ColorPicker } from "./ColorPicker";
 export { IconPicker }  from "./IconPicker";
+export { OfflineBanner } from "./OfflineBanner";

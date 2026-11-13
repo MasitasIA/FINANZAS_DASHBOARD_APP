@@ -22,6 +22,7 @@ import {
 import { ShareResourceModal } from "@/components/shared/ShareModals";
 import {
   useAccount,
+  useAccounts,
   useUpdateAccount,
   useDeleteAccount,
 } from "@/hooks/useAccounts";
@@ -31,11 +32,22 @@ import {
   useDeleteTransaction,
 } from "@/hooks/useTransactions";
 import {
+  useInstallments,
+} from "@/hooks/useInstallments";
+import {
+  useStatements,
+  useGenerateStatement,
+  usePayStatement,
+} from "@/hooks/useStatements";
+import {
   formatCurrency,
   formatDate,
   formatRelativeDate,
 } from "@/utils/formatters";
-import type { Transaction } from "@/types";
+import type {
+  Transaction,
+  CreditCardStatement,
+} from "@/types";
 import { useAppTheme } from "@/theme/useAppTheme";
 
 const ACCOUNT_ICONS: (keyof typeof MaterialCommunityIcons.glyphMap)[] = [
@@ -77,6 +89,64 @@ export default function AccountDetailScreen() {
   const [editClosingDay, setEditClosingDay] = useState("");
   const [editDueDay, setEditDueDay] = useState("");
 
+  // Credit card specific hooks & state
+  const [creditTab, setCreditTab] = useState<
+    "txs" | "installments" | "statements"
+  >("txs");
+  const { data: installmentsData, isLoading: loadingInstallments } =
+    useInstallments(account?.type === "credit" ? id : undefined);
+  const { data: statementsData, isLoading: loadingStatements } = useStatements(
+    account?.type === "credit" ? id : undefined,
+  );
+  const { data: allAccountsData } = useAccounts();
+  const generateStatementMutation = useGenerateStatement();
+  const payStatementMutation = usePayStatement();
+
+  // Statement payment modal state
+  const [statementToPay, setStatementToPay] =
+    useState<CreditCardStatement | null>(null);
+  const [statementPayAmount, setStatementPayAmount] = useState("");
+  const [statementPayFromId, setStatementPayFromId] = useState("");
+
+  const handleOpenPayStatement = (stmt: CreditCardStatement) => {
+    setStatementToPay(stmt);
+    const remaining = Math.max(0, stmt.totalDue - stmt.paidAmount);
+    setStatementPayAmount(remaining > 0 ? String(remaining) : "");
+    const firstDebit = (allAccountsData?.data ?? []).find(
+      (a) => a.type !== "credit" && a.currency === account?.currency,
+    );
+    setStatementPayFromId(firstDebit?.id ?? "");
+  };
+
+  const handleConfirmPayStatement = () => {
+    if (!statementToPay || !statementPayFromId) return;
+    const parsed = parseFloat(statementPayAmount.replace(",", "."));
+    if (isNaN(parsed) || parsed <= 0) return;
+
+    payStatementMutation.mutate(
+      {
+        statementId: statementToPay.id,
+        data: {
+          amount: parsed,
+          fromAccountId: statementPayFromId,
+          date: new Date().toISOString().slice(0, 10),
+          note: `Pago de resumen tarjeta ${account?.name}`,
+        },
+      },
+      {
+        onSuccess: () => {
+          setStatementToPay(null);
+        },
+      },
+    );
+  };
+
+  const handleGenerateStatement = () => {
+    generateStatementMutation.mutate({
+      accountId: id,
+    });
+  };
+
   // Selected Transaction for viewing/editing
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [isEditingTx, setIsEditingTx] = useState(false);
@@ -106,9 +176,25 @@ export default function AccountDetailScreen() {
   const isCredit = account.type === "credit";
   const debt = Math.abs(account.balance);
   const limit = account.creditLimit ?? 0;
-  const available = Math.max(0, limit - debt);
+  const installmentsList = installmentsData?.data ?? [];
+  const statementsList = statementsData?.data ?? [];
+  const futureInstallmentsDebt = installmentsList
+    .filter((i) => i.status === "active")
+    .reduce(
+      (sum, i) =>
+        sum +
+        (i.remainingAmountCents
+          ? i.remainingAmountCents / 100
+          : i.totalAmount -
+            i.installmentAmount * (i.paidInstallmentsCount ?? 1)),
+      0,
+    );
+  const totalCommitment = debt + futureInstallmentsDebt;
+  const available = Math.max(0, limit - totalCommitment);
   const usagePercent =
-    limit > 0 ? Math.min(100, Math.round((debt / limit) * 100)) : 0;
+    limit > 0
+      ? Math.min(100, Math.round((totalCommitment / limit) * 100))
+      : 0;
 
   // Open Edit Account Modal with current values
   const handleOpenEditAccount = () => {
@@ -326,13 +412,24 @@ export default function AccountDetailScreen() {
         {isCredit ? (
           <Card className="gap-4">
             <View className="items-center gap-1">
-              <Typography variant="label">Consumo actual / Deuda</Typography>
+              <Typography variant="label">Deuda actual del período</Typography>
               <Typography className="text-3xl font-bold text-warning-500">
                 {formatCurrency(debt, account.currency)}
               </Typography>
-              <Typography variant="caption" muted>
-                de {formatCurrency(limit, account.currency)} de límite (
-                {usagePercent}% usado)
+              {futureInstallmentsDebt > 0 && (
+                <View className="flex-row items-center gap-1 bg-surface-700/80 px-2.5 py-1 rounded-full mt-0.5">
+                  <MaterialCommunityIcons
+                    name="credit-card-clock"
+                    size={14}
+                    color={colors.primary[500]}
+                  />
+                  <Typography variant="caption" className="text-xs font-medium text-text-secondary">
+                    + {formatCurrency(futureInstallmentsDebt, account.currency)} en cuotas futuras
+                  </Typography>
+                </View>
+              )}
+              <Typography variant="caption" muted className="mt-0.5">
+                de {formatCurrency(limit, account.currency)} de límite ({usagePercent}% comprometido)
               </Typography>
             </View>
 
@@ -352,8 +449,8 @@ export default function AccountDetailScreen() {
                   />
                 </View>
                 <View className="flex-row justify-between">
-                  <Typography variant="caption" muted>
-                    Disponible: {formatCurrency(available, account.currency)}
+                  <Typography variant="caption" muted className="font-semibold text-text-primary">
+                    Disponible real: {formatCurrency(available, account.currency)}
                   </Typography>
                   <Typography variant="caption" muted>
                     Límite: {formatCurrency(limit, account.currency)}
@@ -363,7 +460,7 @@ export default function AccountDetailScreen() {
             )}
 
             {/* Fechas de corte y vencimiento */}
-            {(account.closingDay || account.dueDay) && (
+            {Boolean(account.closingDay || account.dueDay) && (
               <View className="flex-row gap-3 pt-2 border-t border-surface-700/60">
                 {account.closingDay ? (
                   <View className="flex-1 bg-surface-700/60 p-2.5 rounded-xl items-center">
@@ -388,7 +485,7 @@ export default function AccountDetailScreen() {
               </View>
             )}
 
-            {(account.closingDay || account.dueDay) && (
+            {Boolean(account.closingDay || account.dueDay) && (
               <View className="flex-row items-center justify-center gap-1.5 -mt-1 mb-1">
                 <MaterialCommunityIcons
                   name="bell-ring-outline"
@@ -442,74 +539,372 @@ export default function AccountDetailScreen() {
           </Card>
         )}
 
-        {/* ── Últimas transacciones ─────────────────────────── */}
-        <View className="flex-row items-center justify-between pt-2">
-          <Typography variant="h2">Transacciones</Typography>
-          <Pressable
-            onPress={() =>
-              router.push({
-                pathname: "/transaction/new",
-                params: { accountId: id },
-              })
-            }
-            accessibilityLabel="Agregar transacción"
-            className="w-8 h-8 rounded-full bg-primary-600 items-center justify-center active:opacity-80"
-          >
-            <MaterialCommunityIcons
-              name="plus"
-              size={20}
-              color={colors.white}
-            />
-          </Pressable>
-        </View>
-
-        {loadingTx ? (
-          <ActivityIndicator color={colors.primary[500]} />
-        ) : transactions.length === 0 ? (
-          <Typography variant="caption" muted className="text-center py-8">
-            Sin transacciones aún. Toca + para agregar una.
-          </Typography>
-        ) : (
-          transactions.map((tx) => {
-            const isCardPayment =
-              isCredit &&
-              tx.type === "transfer" &&
-              tx.toAccountId === account.id;
-            const isPositive = tx.type === "income" || isCardPayment;
-            return (
-              <Pressable
-                key={tx.id}
-                onPress={() => handleOpenTx(tx)}
-                className="active:opacity-75"
+        {/* ── Selector de Pestañas para Tarjetas de Crédito ── */}
+        {isCredit && (
+          <View className="flex-row bg-surface-700/80 p-1 rounded-2xl gap-1 mt-1">
+            <Pressable
+              onPress={() => setCreditTab("txs")}
+              className={`flex-1 py-2 rounded-xl items-center ${
+                creditTab === "txs" ? "bg-surface-800 shadow-sm" : ""
+              }`}
+            >
+              <Typography
+                className={`text-xs font-semibold ${
+                  creditTab === "txs"
+                    ? "text-primary-600"
+                    : "text-text-secondary"
+                }`}
               >
-                <Card className="flex-row items-center gap-3">
-                  <View className="flex-1 min-w-0">
-                    <Typography numberOfLines={1}>{tx.description}</Typography>
-                    <Typography variant="caption" numberOfLines={1}>
-                      {formatRelativeDate(tx.date)}
-                      {account.isShared && tx.authorName
-                        ? ` • 👤 ${tx.authorName}`
-                        : ""}
-                    </Typography>
-                  </View>
-                  <Typography
-                    numberOfLines={1}
-                    className={`font-semibold shrink-0 ${
-                      isPositive ? "text-success-500" : "text-danger-500"
-                    }`}
-                  >
-                    {isPositive ? "+" : "-"}
-                    {formatCurrency(tx.amount, tx.currency)}
-                  </Typography>
-                  <MaterialCommunityIcons
-                    name="chevron-right"
-                    size={18}
-                    color={colors.text.muted}
-                  />
-                </Card>
+                Movimientos
+              </Typography>
+            </Pressable>
+            <Pressable
+              onPress={() => setCreditTab("installments")}
+              className={`flex-1 py-2 rounded-xl items-center ${
+                creditTab === "installments" ? "bg-surface-800 shadow-sm" : ""
+              }`}
+            >
+              <Typography
+                className={`text-xs font-semibold ${
+                  creditTab === "installments"
+                    ? "text-primary-600"
+                    : "text-text-secondary"
+                }`}
+              >
+                Cuotas ({installmentsList.filter((i) => i.status === "active").length})
+              </Typography>
+            </Pressable>
+            <Pressable
+              onPress={() => setCreditTab("statements")}
+              className={`flex-1 py-2 rounded-xl items-center ${
+                creditTab === "statements" ? "bg-surface-800 shadow-sm" : ""
+              }`}
+            >
+              <Typography
+                className={`text-xs font-semibold ${
+                  creditTab === "statements"
+                    ? "text-primary-600"
+                    : "text-text-secondary"
+                }`}
+              >
+                Resúmenes ({statementsList.length})
+              </Typography>
+            </Pressable>
+          </View>
+        )}
+
+        {/* ── Pestaña: Transacciones / Movimientos ───────────── */}
+        {(!isCredit || creditTab === "txs") && (
+          <>
+            <View className="flex-row items-center justify-between pt-2">
+              <Typography variant="h2">Transacciones</Typography>
+              <Pressable
+                onPress={() =>
+                  router.push({
+                    pathname: "/transaction/new",
+                    params: { accountId: id },
+                  })
+                }
+                accessibilityLabel="Agregar transacción"
+                className="w-8 h-8 rounded-full bg-primary-600 items-center justify-center active:opacity-80"
+              >
+                <MaterialCommunityIcons
+                  name="plus"
+                  size={20}
+                  color={colors.white}
+                />
               </Pressable>
-            );
-          })
+            </View>
+
+            {loadingTx ? (
+              <ActivityIndicator color={colors.primary[500]} />
+            ) : transactions.length === 0 ? (
+              <Typography variant="caption" muted className="text-center py-8">
+                Sin transacciones aún. Toca + para agregar una.
+              </Typography>
+            ) : (
+              transactions.map((tx) => {
+                const isCardPayment =
+                  isCredit &&
+                  tx.type === "transfer" &&
+                  tx.toAccountId === account.id;
+                const isPositive = tx.type === "income" || isCardPayment;
+                return (
+                  <Pressable
+                    key={tx.id}
+                    onPress={() => handleOpenTx(tx)}
+                    className="active:opacity-75"
+                  >
+                    <Card className="flex-row items-center gap-3">
+                      <View className="flex-1 min-w-0">
+                        <Typography numberOfLines={1}>
+                          {tx.description}
+                        </Typography>
+                        <Typography variant="caption" numberOfLines={1}>
+                          {formatRelativeDate(tx.date)}
+                          {account.isShared && tx.authorName
+                            ? ` • 👤 ${tx.authorName}`
+                            : ""}
+                        </Typography>
+                      </View>
+                      <Typography
+                        numberOfLines={1}
+                        className={`font-semibold shrink-0 ${
+                          isPositive ? "text-success-500" : "text-danger-500"
+                        }`}
+                      >
+                        {isPositive ? "+" : "-"}
+                        {formatCurrency(tx.amount, tx.currency)}
+                      </Typography>
+                      <MaterialCommunityIcons
+                        name="chevron-right"
+                        size={18}
+                        color={colors.text.muted}
+                      />
+                    </Card>
+                  </Pressable>
+                );
+              })
+            )}
+          </>
+        )}
+
+        {/* ── Pestaña: Cuotas en curso (Tarjetas de crédito) ─── */}
+        {isCredit && creditTab === "installments" && (
+          <>
+            <View className="flex-row items-center justify-between pt-2">
+              <Typography variant="h2">Cuotas y compras financiadas</Typography>
+              <Pressable
+                onPress={() =>
+                  router.push({
+                    pathname: "/transaction/new",
+                    params: { accountId: id, type: "expense" },
+                  })
+                }
+                className="flex-row items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary-600 active:opacity-80"
+              >
+                <MaterialCommunityIcons
+                  name="plus"
+                  size={16}
+                  color={colors.white}
+                />
+                <Typography
+                  variant="caption"
+                  className="font-semibold text-white"
+                >
+                  Nueva cuota
+                </Typography>
+              </Pressable>
+            </View>
+
+            {loadingInstallments ? (
+              <ActivityIndicator color={colors.primary[500]} />
+            ) : installmentsList.length === 0 ? (
+              <Typography variant="caption" muted className="text-center py-8">
+                No hay compras en cuotas registradas para esta tarjeta.
+              </Typography>
+            ) : (
+              installmentsList.map((inst) => {
+                const paid = inst.paidInstallmentsCount ?? 1;
+                const total = inst.installmentsCount;
+                const progressPercent = Math.min(
+                  100,
+                  Math.round((paid / total) * 100),
+                );
+                const interest = inst.totalAmount - inst.cashPrice;
+
+                return (
+                  <Card key={inst.id} className="gap-3">
+                    <View className="flex-row items-start justify-between">
+                      <View className="flex-1 pr-2">
+                        <Typography className="font-bold text-text-primary text-base">
+                          {inst.description}
+                        </Typography>
+                        <Typography variant="caption" muted className="mt-0.5">
+                          Inicio: {formatDate(inst.firstDueDate)} • Cuota {paid} de {total}
+                        </Typography>
+                      </View>
+                      <View className="items-end">
+                        <Typography className="font-bold text-sm text-text-primary">
+                          {formatCurrency(inst.installmentAmount, account.currency)}/mes
+                        </Typography>
+                        <Typography variant="caption" muted>
+                          Total: {formatCurrency(inst.totalAmount, account.currency)}
+                        </Typography>
+                      </View>
+                    </View>
+
+                    {/* Barra de progreso de cuotas */}
+                    <View className="gap-1">
+                      <View className="h-2 bg-surface-700 rounded-full overflow-hidden">
+                        <View
+                          className="h-full bg-primary-600 rounded-full"
+                          style={{ width: `${progressPercent}%` }}
+                        />
+                      </View>
+                      <View className="flex-row justify-between">
+                        <Typography variant="caption" muted className="text-[11px]">
+                          {paid} pagada{paid > 1 ? "s" : ""} ({progressPercent}%)
+                        </Typography>
+                        <Typography variant="caption" muted className="text-[11px]">
+                          Resta: {formatCurrency(
+                            inst.remainingAmountCents
+                              ? inst.remainingAmountCents / 100
+                              : inst.totalAmount - inst.installmentAmount * paid,
+                            account.currency,
+                          )}
+                        </Typography>
+                      </View>
+                    </View>
+
+                    {/* Información financiera de intereses */}
+                    {interest > 0 && (
+                      <View className="flex-row items-center gap-1.5 bg-warning-500/10 px-2.5 py-1 rounded-lg">
+                        <MaterialCommunityIcons
+                          name="information-outline"
+                          size={14}
+                          color="#f79009"
+                        />
+                        <Typography className="text-xs text-warning-500 font-medium">
+                          Precio contado: {formatCurrency(inst.cashPrice, account.currency)} • Recargo: +{formatCurrency(interest, account.currency)}
+                        </Typography>
+                      </View>
+                    )}
+                  </Card>
+                );
+              })
+            )}
+          </>
+        )}
+
+        {/* ── Pestaña: Resúmenes de Tarjeta ─────────────────── */}
+        {isCredit && creditTab === "statements" && (
+          <>
+            <View className="flex-row items-center justify-between pt-2">
+              <Typography variant="h2">Historial de resúmenes</Typography>
+              <Pressable
+                onPress={handleGenerateStatement}
+                disabled={generateStatementMutation.isPending}
+                className="flex-row items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary-600 active:opacity-80"
+              >
+                {generateStatementMutation.isPending ? (
+                  <ActivityIndicator size="small" color={colors.white} />
+                ) : (
+                  <MaterialCommunityIcons
+                    name="file-document-plus-outline"
+                    size={16}
+                    color={colors.white}
+                  />
+                )}
+                <Typography
+                  variant="caption"
+                  className="font-semibold text-white"
+                >
+                  Cerrar período
+                </Typography>
+              </Pressable>
+            </View>
+
+            {loadingStatements ? (
+              <ActivityIndicator color={colors.primary[500]} />
+            ) : statementsList.length === 0 ? (
+              <Typography variant="caption" muted className="text-center py-8">
+                No hay resúmenes generados aún. Toca &quot;Cerrar período&quot; para registrar el snapshot.
+              </Typography>
+            ) : (
+              statementsList.map((stmt) => {
+                const pending = Math.max(0, stmt.totalDue - stmt.paidAmount);
+                const isPaid = stmt.status === "paid_full" || pending <= 0;
+
+                return (
+                  <Card key={stmt.id} className="gap-3">
+                    <View className="flex-row items-start justify-between">
+                      <View className="gap-0.5">
+                        <View className="flex-row items-center gap-2">
+                          <MaterialCommunityIcons
+                            name="file-document-outline"
+                            size={18}
+                            color={colors.primary[500]}
+                          />
+                          <Typography className="font-bold text-text-primary text-base">
+                            Resumen {formatDate(stmt.closingDate)}
+                          </Typography>
+                        </View>
+                        <Typography variant="caption" muted>
+                          Vencimiento: {formatDate(stmt.dueDate)}
+                        </Typography>
+                      </View>
+
+                      <View
+                        className={`px-2.5 py-1 rounded-full ${
+                          isPaid
+                            ? "bg-success-500/15"
+                            : stmt.status === "paid_partial"
+                              ? "bg-warning-500/15"
+                              : "bg-danger-500/15"
+                        }`}
+                      >
+                        <Typography
+                          className={`text-xs font-semibold ${
+                            isPaid
+                              ? "text-success-500"
+                              : stmt.status === "paid_partial"
+                                ? "text-warning-500"
+                                : "text-danger-500"
+                          }`}
+                        >
+                          {isPaid
+                            ? "Pagado total"
+                            : stmt.status === "paid_partial"
+                              ? "Pago parcial"
+                              : "Pendiente"}
+                        </Typography>
+                      </View>
+                    </View>
+
+                    <View className="flex-row justify-between pt-2 border-t border-surface-600/40">
+                      <View>
+                        <Typography variant="caption" muted className="text-[11px]">
+                          Total a pagar
+                        </Typography>
+                        <Typography className="font-bold text-base text-text-primary">
+                          {formatCurrency(stmt.totalDue, account.currency)}
+                        </Typography>
+                      </View>
+                      <View className="items-center">
+                        <Typography variant="caption" muted className="text-[11px]">
+                          Pago mínimo
+                        </Typography>
+                        <Typography className="font-medium text-sm text-text-secondary">
+                          {formatCurrency(stmt.minimumDue, account.currency)}
+                        </Typography>
+                      </View>
+                      <View className="items-end">
+                        <Typography variant="caption" muted className="text-[11px]">
+                          Saldo impago
+                        </Typography>
+                        <Typography
+                          className={`font-bold text-base ${
+                            pending > 0 ? "text-danger-500" : "text-success-500"
+                          }`}
+                        >
+                          {formatCurrency(pending, account.currency)}
+                        </Typography>
+                      </View>
+                    </View>
+
+                    {!isPaid && (
+                      <Button
+                        title="Pagar resumen"
+                        size="sm"
+                        onPress={() => handleOpenPayStatement(stmt)}
+                      />
+                    )}
+                  </Card>
+                );
+              })
+            )}
+          </>
         )}
       </ScrollView>
 
@@ -814,6 +1209,116 @@ export default function AccountDetailScreen() {
                 </View>
               </View>
             ) : null}
+          </View>
+        </View>
+      </Modal>
+      {/* ── MODAL: Pagar Resumen de Tarjeta ────────────────────────── */}
+      <Modal
+        visible={Boolean(statementToPay)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setStatementToPay(null)}
+      >
+        <View className="flex-1 bg-black/50 justify-center items-center px-4">
+          <View className="bg-surface-800 rounded-3xl p-6 w-full max-w-sm gap-4 border border-surface-600/80">
+            <Typography variant="h2">Pagar resumen</Typography>
+            {statementToPay && (
+              <>
+                <Typography variant="caption" muted>
+                  Vencimiento: {formatDate(statementToPay.dueDate)} • Total:{" "}
+                  {formatCurrency(statementToPay.totalDue, account.currency)}
+                </Typography>
+
+                <View>
+                  <Typography variant="label" className="mb-1.5">
+                    Importe a abonar ({account.currency})
+                  </Typography>
+                  <TextInput
+                    value={statementPayAmount}
+                    onChangeText={setStatementPayAmount}
+                    keyboardType="decimal-pad"
+                    className="bg-surface-700/60 p-3 rounded-xl text-text-primary text-xl font-bold"
+                    placeholderTextColor={colors.text.muted}
+                  />
+                  <Typography
+                    variant="caption"
+                    muted
+                    className="mt-1 text-[11px]"
+                  >
+                    Mínimo sugerido:{" "}
+                    {formatCurrency(
+                      statementToPay.minimumDue,
+                      account.currency,
+                    )}
+                  </Typography>
+                </View>
+
+                <View>
+                  <Typography variant="label" className="mb-1.5">
+                    Pagar desde cuenta
+                  </Typography>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    className="gap-2"
+                  >
+                    {(allAccountsData?.data ?? [])
+                      .filter((a) => a.type !== "credit" && a.id !== id)
+                      .map((fromAcc) => {
+                        const isSelected = statementPayFromId === fromAcc.id;
+                        return (
+                          <Pressable
+                            key={fromAcc.id}
+                            onPress={() => setStatementPayFromId(fromAcc.id)}
+                            className={`px-3 py-2 rounded-xl border mr-2 ${
+                              isSelected
+                                ? "bg-primary-600 border-primary-600"
+                                : "bg-surface-700/60 border-transparent"
+                            }`}
+                          >
+                            <Typography
+                              className={`text-xs font-semibold ${
+                                isSelected ? "text-white" : "text-text-primary"
+                              }`}
+                            >
+                              {fromAcc.name}
+                            </Typography>
+                            <Typography
+                              variant="caption"
+                              className={`text-[10px] ${
+                                isSelected
+                                  ? "text-white/80"
+                                  : "text-text-muted"
+                              }`}
+                            >
+                              {formatCurrency(
+                                fromAcc.balance,
+                                fromAcc.currency,
+                              )}
+                            </Typography>
+                          </Pressable>
+                        );
+                      })}
+                  </ScrollView>
+                </View>
+
+                <View className="flex-row gap-3 pt-2">
+                  <Button
+                    title="Cancelar"
+                    variant="ghost"
+                    className="flex-1"
+                    onPress={() => setStatementToPay(null)}
+                  />
+                  <Button
+                    title="Confirmar pago"
+                    className="flex-1"
+                    onPress={handleConfirmPayStatement}
+                    loading={payStatementMutation.isPending}
+                    disabled={!statementPayFromId || !statementPayAmount}
+                  />
+                </View>
+              </>
+            )}
           </View>
         </View>
       </Modal>

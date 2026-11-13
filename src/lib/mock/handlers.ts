@@ -9,14 +9,21 @@ import type {
   Account,
   AnnualReport,
   ApiResponse,
+  Budget,
   Category,
+  CreateInstallmentPayload,
+  CreditCardInstallment,
+  CreditCardStatement,
+  Currency,
   GoalContributionPayload,
   GoalWithdrawPayload,
   MonthlyReport,
   PaginatedResponse,
+  PayStatementPayload,
   RecurringExpense,
   RecurringProcessResult,
   SavingsGoal,
+  SetBudgetPayload,
   ShareInviteResponse,
   ShareJoinResponse,
   SharedResourceType,
@@ -30,9 +37,12 @@ import {
   delay,
   generateId,
   mockAccounts,
+  mockBudgets,
   mockCategories,
   mockGoals,
+  mockInstallments,
   mockRecurringExpenses,
+  mockStatements,
   mockTransactions,
 } from "./db";
 
@@ -84,8 +94,13 @@ export const mockAccountHandlers = {
   ): Promise<ApiResponse<Account>> {
     await delay();
     const now = new Date().toISOString();
-    const account = {
+    const account: Account = {
       ...data,
+      balanceCents: data.balanceCents ?? Math.round(data.balance * 100),
+      creditLimitCents:
+        data.creditLimit != null
+          ? data.creditLimitCents ?? Math.round(data.creditLimit * 100)
+          : undefined,
       id: generateId(),
       createdAt: now,
       updatedAt: now,
@@ -181,7 +196,13 @@ export const mockTransactionHandlers = {
   ): Promise<ApiResponse<Transaction>> {
     await delay();
     const now = new Date().toISOString();
-    const tx = { ...data, id: generateId(), createdAt: now, updatedAt: now };
+    const tx: Transaction = {
+      ...data,
+      amountCents: data.amountCents ?? Math.round(data.amount * 100),
+      id: generateId(),
+      createdAt: now,
+      updatedAt: now,
+    };
     transactions.push(tx);
 
     // Actualiza balance de la cuenta origen
@@ -434,7 +455,16 @@ export const mockGoalHandlers = {
   ): Promise<ApiResponse<SavingsGoal>> {
     await delay();
     const now = new Date().toISOString();
-    const goal = { ...data, id: generateId(), createdAt: now, updatedAt: now };
+    const goal: SavingsGoal = {
+      ...data,
+      targetAmountCents:
+        data.targetAmountCents ?? Math.round(data.targetAmount * 100),
+      currentAmountCents:
+        data.currentAmountCents ?? Math.round(data.currentAmount * 100),
+      id: generateId(),
+      createdAt: now,
+      updatedAt: now,
+    };
     goals.push(goal);
     return ok(goal);
   },
@@ -794,6 +824,7 @@ export const mockRecurringExpenseHandlers = {
     const now = new Date().toISOString();
     const newItem: RecurringExpense = {
       ...payload,
+      amountCents: payload.amountCents ?? Math.round(payload.amount * 100),
       id: `rec-${generateId()}`,
       accountName: acc?.name,
       accountColor: acc?.color,
@@ -1031,6 +1062,256 @@ export const mockShareHandlers = {
         goal.isShared = (goal.members?.length || 0) > 1;
       }
     }
+    return ok(null);
+  },
+};
+
+// ─── Tarjetas de Crédito: Cuotas & Resúmenes Mock Handlers ───────────────────
+let installments: CreditCardInstallment[] = [...mockInstallments];
+let statements: CreditCardStatement[] = [...mockStatements];
+
+export const mockInstallmentHandlers = {
+  async list(accountId?: string): Promise<ApiResponse<CreditCardInstallment[]>> {
+    await delay();
+    let res = installments;
+    if (accountId) res = res.filter((i) => i.accountId === accountId);
+    return ok(res);
+  },
+
+  async create(
+    payload: CreateInstallmentPayload,
+  ): Promise<ApiResponse<CreditCardInstallment>> {
+    await delay();
+    const totalCents = Math.round(payload.totalAmount * 100);
+    const cashCents = Math.round((payload.cashPrice ?? payload.totalAmount) * 100);
+    const instCents = Math.round(totalCents / payload.installmentsCount);
+    const id = `inst-${generateId()}`;
+    const now = new Date().toISOString();
+
+    const newInst: CreditCardInstallment = {
+      id,
+      accountId: payload.accountId,
+      description: payload.description,
+      totalAmount: totalCents / 100,
+      totalAmountCents: totalCents,
+      cashPrice: cashCents / 100,
+      cashPriceCents: cashCents,
+      installmentsCount: payload.installmentsCount,
+      installmentAmount: instCents / 100,
+      installmentAmountCents: instCents,
+      paidInstallmentsCount: 1,
+      remainingAmountCents: totalCents - instCents,
+      firstDueDate: payload.firstDueDate || now.slice(0, 10),
+      status: "active",
+      createdAt: now,
+    };
+
+    installments.unshift(newInst);
+
+    // Agregar transacción de cuota 1
+    const tx: Transaction = {
+      id: generateId(),
+      accountId: payload.accountId,
+      categoryId: payload.categoryId || "cat-other-exp",
+      type: "expense",
+      amount: instCents / 100,
+      amountCents: instCents,
+      currency: "ARS",
+      description: `${payload.description} (Cuota 1/${payload.installmentsCount})`,
+      date: payload.firstDueDate || now.slice(0, 10),
+      installmentId: id,
+      installmentNumber: 1,
+      installmentsTotal: payload.installmentsCount,
+      createdAt: now,
+      updatedAt: now,
+    };
+    transactions.unshift(tx);
+
+    const acc = accounts.find((a) => a.id === payload.accountId);
+    if (acc) {
+      acc.balance -= instCents / 100;
+      acc.balanceCents = (acc.balanceCents ?? Math.round(acc.balance * 100)) - instCents;
+    }
+
+    return ok(newInst);
+  },
+
+  async cancel(id: string): Promise<ApiResponse<{ success: boolean }>> {
+    await delay();
+    const idx = installments.findIndex((i) => i.id === id);
+    if (idx !== -1) {
+      installments[idx].status = "cancelled";
+    }
+    return ok({ success: true });
+  },
+};
+
+export const mockStatementHandlers = {
+  async list(accountId?: string): Promise<ApiResponse<CreditCardStatement[]>> {
+    await delay();
+    let res = statements;
+    if (accountId) res = res.filter((s) => s.accountId === accountId);
+    return ok(res);
+  },
+
+  async generate(
+    accountId: string,
+    closingDate?: string,
+    dueDate?: string,
+  ): Promise<ApiResponse<CreditCardStatement>> {
+    await delay();
+    const acc = accounts.find((a) => a.id === accountId);
+    const close = closingDate || new Date().toISOString().slice(0, 10);
+    const due = dueDate || new Date().toISOString().slice(0, 10);
+    const charges = Math.abs(acc?.balance ?? 0);
+    const chargesCents = Math.round(charges * 100);
+
+    const newStmt: CreditCardStatement = {
+      id: `stmt-${generateId()}`,
+      accountId,
+      periodStart: close,
+      closingDate: close,
+      dueDate: due,
+      previousBalance: 0,
+      previousBalanceCents: 0,
+      charges,
+      chargesCents,
+      installments: 0,
+      installmentsCents: 0,
+      interest: 0,
+      interestCents: 0,
+      totalDue: charges,
+      totalDueCents: chargesCents,
+      minimumDue: Math.round(charges * 0.1),
+      minimumDueCents: Math.round(chargesCents * 0.1),
+      paidAmount: 0,
+      paidAmountCents: 0,
+      status: "closed",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    statements.unshift(newStmt);
+    return ok(newStmt);
+  },
+
+  async pay(
+    statementId: string,
+    payload: PayStatementPayload,
+  ): Promise<ApiResponse<CreditCardStatement>> {
+    await delay();
+    const idx = statements.findIndex((s) => s.id === statementId);
+    if (idx === -1) throw new Error("Resumen no encontrado");
+
+    const stmt = statements[idx];
+    const payCents = Math.round(payload.amount * 100);
+    stmt.paidAmountCents += payCents;
+    stmt.paidAmount = stmt.paidAmountCents / 100;
+    stmt.status = stmt.paidAmountCents >= stmt.totalDueCents ? "paid_full" : "paid_partial";
+    stmt.updatedAt = new Date().toISOString();
+
+    // Descontar de cuenta origen y acreditar a tarjeta
+    const fromAcc = accounts.find((a) => a.id === payload.fromAccountId);
+    const toAcc = accounts.find((a) => a.id === stmt.accountId);
+    if (fromAcc) {
+      fromAcc.balance -= payload.amount;
+      fromAcc.balanceCents = (fromAcc.balanceCents ?? 0) - payCents;
+    }
+    if (toAcc) {
+      toAcc.balance += payload.amount;
+      toAcc.balanceCents = (toAcc.balanceCents ?? 0) + payCents;
+    }
+
+    return ok(stmt);
+  },
+};
+
+// ─── Presupuestos Mensuales Mock Handlers ──────────────────────────────────────
+let budgets: Budget[] = [...mockBudgets];
+
+export const mockBudgetHandlers = {
+  async list(
+    currency: Currency = "ARS",
+    month?: number,
+    year?: number,
+  ): Promise<ApiResponse<Budget[]>> {
+    await delay();
+    const now = new Date();
+    const curYear = year ?? now.getFullYear();
+    const curMonth = month ?? now.getMonth() + 1;
+    const mPrefix = `${curYear}-${String(curMonth).padStart(2, "0")}`;
+
+    const res = budgets
+      .filter((b) => b.currency === currency)
+      .map((b) => {
+        const cat = mockCategories.find((c) => c.id === b.categoryId);
+        const spent = transactions
+          .filter(
+            (t) =>
+              t.type === "expense" &&
+              t.categoryId === b.categoryId &&
+              t.date.startsWith(mPrefix),
+          )
+          .reduce((sum, t) => sum + t.amount, 0);
+        const spentCents = Math.round(spent * 100);
+        const pct = b.amount > 0 ? Math.round((spent / b.amount) * 100) : 0;
+
+        return {
+          ...b,
+          categoryName: cat?.name ?? b.categoryName,
+          categoryIcon: cat?.icon ?? b.categoryIcon,
+          categoryColor: cat?.color ?? b.categoryColor,
+          spentAmount: spent,
+          spentAmountCents: spentCents,
+          percentage: pct,
+        };
+      });
+
+    return ok(res);
+  },
+
+  async set(payload: SetBudgetPayload): Promise<ApiResponse<Budget>> {
+    await delay();
+    const cat = mockCategories.find((c) => c.id === payload.categoryId);
+    const curr = payload.currency || "ARS";
+    const amountCents = Math.round(payload.amount * 100);
+    const idx = budgets.findIndex(
+      (b) => b.categoryId === payload.categoryId && b.currency === curr,
+    );
+
+    const now = new Date().toISOString();
+    if (idx !== -1) {
+      budgets[idx] = {
+        ...budgets[idx],
+        amount: payload.amount,
+        amountCents,
+        updatedAt: now,
+      };
+      return ok(budgets[idx]);
+    } else {
+      const newBudget: Budget = {
+        id: `bdg-${generateId()}`,
+        categoryId: payload.categoryId,
+        categoryName: cat?.name,
+        categoryIcon: cat?.icon,
+        categoryColor: cat?.color,
+        currency: curr,
+        amount: payload.amount,
+        amountCents,
+        spentAmount: 0,
+        spentAmountCents: 0,
+        percentage: 0,
+        createdAt: now,
+        updatedAt: now,
+      };
+      budgets.push(newBudget);
+      return ok(newBudget);
+    }
+  },
+
+  async delete(id: string): Promise<ApiResponse<null>> {
+    await delay();
+    budgets = budgets.filter((b) => b.id !== id);
     return ok(null);
   },
 };

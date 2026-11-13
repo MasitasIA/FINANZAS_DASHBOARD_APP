@@ -218,10 +218,14 @@ export async function handleTransactions(
       body.note != null ? sanitizeText(body.note, 400) || null : null;
     const currency = sanitizeCurrency(body.currency);
     const date = sanitizeDate(body.date);
+    const amountCents =
+      body.amountCents != null
+        ? Math.round(Number(body.amountCents))
+        : Math.round(amount * 100);
 
     await env.DB.prepare(
-      `INSERT INTO transactions (id, user_id, author_name, account_id, category_id, type, amount, currency, description, note, date, to_account_id, goal_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO transactions (id, user_id, author_name, account_id, category_id, type, amount, amount_cents, currency, description, note, date, to_account_id, goal_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         id,
@@ -231,6 +235,7 @@ export async function handleTransactions(
         categoryId,
         body.type,
         amount,
+        amountCents,
         currency,
         description,
         note,
@@ -281,8 +286,12 @@ export async function handleTransactions(
     if (body.amount !== undefined) {
       const amount = sanitizeAmount(body.amount, false, false);
       if (amount === null) return error("Monto inválido", 400);
-      fields.push("amount = ?");
-      values.push(amount);
+      const amountCents =
+        body.amountCents != null
+          ? Math.round(Number(body.amountCents))
+          : Math.round(amount * 100);
+      fields.push("amount = ?", "amount_cents = ?");
+      values.push(amount, amountCents);
     }
     if (body.date !== undefined) {
       fields.push("date = ?");

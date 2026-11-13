@@ -5,6 +5,7 @@ import {
   Modal,
   Pressable,
   ScrollView,
+  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -13,13 +14,15 @@ import Constants from "expo-constants";
 import * as Updates from "expo-updates";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { signOut } from "firebase/auth";
-import { Card, ThemeToggle, Typography } from "@/components/ui";
+import { Button, Card, ThemeToggle, Typography } from "@/components/ui";
 import { AccountCard } from "@/components/accounts/AccountCard";
 import { GoalCard } from "@/components/goals/GoalCard";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useGoals, useSystemStats } from "@/hooks/useGoals";
 import { useRecurringExpenses } from "@/hooks/useRecurringExpenses";
 import { useTransactions } from "@/hooks/useTransactions";
+import { useBudgets, useSetBudget, useDeleteBudget } from "@/hooks/useBudgets";
+import { useCategories } from "@/hooks/useCategories";
 import { auth } from "@/lib/firebase";
 import { formatCurrency } from "@/utils/formatters";
 import type { Currency } from "@/types";
@@ -61,6 +64,19 @@ export default function DashboardScreen() {
   const { data: recurringData, isLoading: loadingRecurring } =
     useRecurringExpenses();
   const { data: transactionsData } = useTransactions({ pageSize: 50 });
+  const { data: budgetsData, isLoading: loadingBudgets } = useBudgets();
+  const budgets = budgetsData?.data ?? [];
+  const { data: categoriesData } = useCategories();
+  const allCategories = categoriesData?.data ?? [];
+  const expenseCategories = allCategories.filter((c) => c.type === "expense");
+  const setBudgetMutation = useSetBudget();
+  const deleteBudgetMutation = useDeleteBudget();
+
+  // Modal para agregar o editar presupuesto
+  const [showBudgetModal, setShowBudgetModal] = useState(false);
+  const [budgetCatId, setBudgetCatId] = useState("");
+  const [budgetAmountStr, setBudgetAmountStr] = useState("");
+
   const { data: statsData, isLoading: loadingStats } =
     useSystemStats(showInfoModal);
   const systemStats = statsData?.data;
@@ -209,14 +225,91 @@ export default function DashboardScreen() {
       (balancesByCurrency[curr] ?? 0) + (g.currentAmount || 0);
   });
 
-  const activeCurrencies = Array.from(
-    new Set([
-      ...Object.keys(balancesByCurrency),
-      ...Object.keys(goalsByCurrency),
-    ]),
-  ) as Currency[];
-  const displayCurrencies: Currency[] =
-    activeCurrencies.length > 0 ? activeCurrencies : ["ARS"];
+  const activeCurrencies = useMemo(() => {
+    return Array.from(
+      new Set([
+        ...Object.keys(balancesByCurrency),
+        ...Object.keys(goalsByCurrency),
+      ]),
+    ) as Currency[];
+  }, [balancesByCurrency, goalsByCurrency]);
+
+  const displayCurrencies = useMemo<Currency[]>(() => {
+    return activeCurrencies.length > 0 ? activeCurrencies : ["ARS"];
+  }, [activeCurrencies]);
+
+  // Clasificación de Fondos: Disponible / Reservado / Comprometido
+  const fundsClassification = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+      .toISOString()
+      .slice(0, 10);
+
+    const primaryCurr = displayCurrencies[0] || "ARS";
+
+    // 1. Efectivo positivo en cuentas
+    const cash = accounts
+      .filter(
+        (a) =>
+          a.currency === primaryCurr && a.type !== "credit" && a.balance > 0,
+      )
+      .reduce((sum, a) => sum + a.balance, 0);
+
+    // 2. Reservado en metas de ahorro activas
+    const reserved = goals
+      .filter(
+        (g) => (g.currency || "ARS") === primaryCurr && g.status === "active",
+      )
+      .reduce((sum, g) => sum + (g.currentAmount || 0), 0);
+
+    // 3. Comprometido: automáticos pendientes del mes + deuda de tarjetas
+    const pendingRecurring = recurringExpenses
+      .filter(
+        (r) =>
+          r.isActive &&
+          r.type === "expense" &&
+          (r.currency || "ARS") === primaryCurr &&
+          r.dueDate >= today &&
+          r.dueDate <= endOfMonth,
+      )
+      .reduce((sum, r) => sum + r.amount, 0);
+
+    const creditDebt = accounts
+      .filter((a) => a.currency === primaryCurr && a.type === "credit")
+      .reduce((sum, a) => sum + Math.abs(a.balance), 0);
+
+    const committed = pendingRecurring + creditDebt;
+
+    // 4. Disponible libre
+    const available = Math.max(0, cash - committed);
+
+    return { cash, reserved, committed, available, currency: primaryCurr };
+  }, [accounts, goals, recurringExpenses, displayCurrencies]);
+
+  const handleOpenSetBudget = (catId?: string, currentAmount?: number) => {
+    const defaultCat = catId || expenseCategories[0]?.id || "";
+    setBudgetCatId(defaultCat);
+    setBudgetAmountStr(currentAmount ? String(currentAmount) : "");
+    setShowBudgetModal(true);
+  };
+
+  const handleSaveBudget = () => {
+    if (!budgetCatId) return;
+    const parsed = parseFloat(budgetAmountStr.replace(",", "."));
+    if (isNaN(parsed) || parsed <= 0) return;
+
+    setBudgetMutation.mutate(
+      {
+        categoryId: budgetCatId,
+        currency: displayCurrencies[0] || "ARS",
+        amount: parsed,
+      },
+      {
+        onSuccess: () => setShowBudgetModal(false),
+      },
+    );
+  };
 
   return (
     <SafeAreaView edges={["top"]} className="flex-1 bg-surface-900">
@@ -378,6 +471,269 @@ export default function DashboardScreen() {
                 );
               })}
             </View>
+          )}
+        </View>
+
+        {/* ── Clasificación de Fondos: Disponible, Reservado, Comprometido ── */}
+        <View className="mb-6">
+          <View className="flex-row items-center justify-between mb-2">
+            <Typography
+              variant="label"
+              className="text-xs uppercase tracking-wider text-text-secondary"
+            >
+              Distribución de fondos ({fundsClassification.currency})
+            </Typography>
+          </View>
+          <Card className="p-3 gap-2.5">
+            {/* Disponible */}
+            <View className="flex-row items-center justify-between bg-success-500/10 p-3 rounded-2xl border border-success-500/20">
+              <View className="flex-row items-center gap-3 flex-1 mr-3">
+                <View className="w-10 h-10 rounded-xl bg-success-500/15 items-center justify-center shrink-0">
+                  <MaterialCommunityIcons
+                    name="check-circle-outline"
+                    size={20}
+                    color="#17b26a"
+                  />
+                </View>
+                <View className="flex-1">
+                  <Typography className="text-sm font-semibold text-success-500">
+                    Disponible
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    muted
+                    className="text-[11px] mt-0.5"
+                  >
+                    Libre de deudas
+                  </Typography>
+                </View>
+              </View>
+              <Typography
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                className="font-bold text-lg text-success-500 text-right shrink-0"
+              >
+                {formatCurrency(
+                  fundsClassification.available,
+                  fundsClassification.currency,
+                )}
+              </Typography>
+            </View>
+
+            {/* Reservado */}
+            <View className="flex-row items-center justify-between bg-primary-600/10 p-3 rounded-2xl border border-primary-600/20">
+              <View className="flex-row items-center gap-3 flex-1 mr-3">
+                <View className="w-10 h-10 rounded-xl bg-primary-600/15 items-center justify-center shrink-0">
+                  <MaterialCommunityIcons
+                    name="piggy-bank-outline"
+                    size={20}
+                    color={colors.primary[600]}
+                  />
+                </View>
+                <View className="flex-1">
+                  <Typography className="text-sm font-semibold text-primary-600">
+                    Reservado
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    muted
+                    className="text-[11px] mt-0.5"
+                  >
+                    En metas activas
+                  </Typography>
+                </View>
+              </View>
+              <Typography
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                className="font-bold text-lg text-primary-600 text-right shrink-0"
+              >
+                {formatCurrency(
+                  fundsClassification.reserved,
+                  fundsClassification.currency,
+                )}
+              </Typography>
+            </View>
+
+            {/* Comprometido */}
+            <View className="flex-row items-center justify-between bg-warning-500/10 p-3 rounded-2xl border border-warning-500/20">
+              <View className="flex-row items-center gap-3 flex-1 mr-3">
+                <View className="w-10 h-10 rounded-xl bg-warning-500/15 items-center justify-center shrink-0">
+                  <MaterialCommunityIcons
+                    name="clock-alert-outline"
+                    size={20}
+                    color="#f79009"
+                  />
+                </View>
+                <View className="flex-1">
+                  <Typography className="text-sm font-semibold text-warning-500">
+                    Comprometido
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    muted
+                    className="text-[11px] mt-0.5"
+                  >
+                    Fijos y tarjetas
+                  </Typography>
+                </View>
+              </View>
+              <Typography
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                className="font-bold text-lg text-warning-500 text-right shrink-0"
+              >
+                {formatCurrency(
+                  fundsClassification.committed,
+                  fundsClassification.currency,
+                )}
+              </Typography>
+            </View>
+          </Card>
+        </View>
+
+        {/* ── Presupuestos Mensuales por Categoría ───────────── */}
+        <View className="mb-6 gap-3">
+          <View className="flex-row items-center justify-between mb-1">
+            <View className="flex-row items-center gap-2">
+              <Typography variant="h2">Presupuestos del mes</Typography>
+            </View>
+            <Typography
+              variant="caption"
+              className="text-primary-600 font-semibold"
+              onPress={() => handleOpenSetBudget()}
+            >
+              + Configurar
+            </Typography>
+          </View>
+
+          {loadingBudgets ? (
+            <ActivityIndicator color={colors.primary[500]} />
+          ) : budgets.length === 0 ? (
+            <Pressable onPress={() => handleOpenSetBudget()}>
+              <Card className="flex-row items-center justify-between p-3.5">
+                <View className="flex-row items-center gap-3 flex-1 mr-2">
+                  <View className="w-9 h-9 rounded-2xl bg-primary-600/15 items-center justify-center">
+                    <MaterialCommunityIcons
+                      name="chart-pie"
+                      size={18}
+                      color={colors.primary[600]}
+                    />
+                  </View>
+                  <View className="flex-1">
+                    <Typography className="font-semibold text-sm text-text-primary">
+                      Fija límites de gasto mensual
+                    </Typography>
+                    <Typography variant="caption" muted>
+                      Recibe alertas al 80% y 100% de tu presupuesto
+                    </Typography>
+                  </View>
+                </View>
+                <MaterialCommunityIcons
+                  name="chevron-right"
+                  size={20}
+                  color={colors.text.muted}
+                />
+              </Card>
+            </Pressable>
+          ) : (
+            budgets.map((b) => {
+              const spent = b.spentAmount ?? 0;
+              const limitAmount = b.amount;
+              const pct =
+                b.percentage ??
+                (limitAmount > 0 ? Math.round((spent / limitAmount) * 100) : 0);
+              const isDanger = pct >= 100;
+              const isWarning = pct >= 80 && pct < 100;
+
+              return (
+                <Pressable
+                  key={b.id}
+                  onPress={() => handleOpenSetBudget(b.categoryId, b.amount)}
+                >
+                  <Card className="gap-2.5 p-3.5">
+                    <View className="flex-row items-center justify-between">
+                      <View className="flex-row items-center gap-2.5 flex-1 pr-2">
+                        <View
+                          className="w-8 h-8 rounded-xl items-center justify-center"
+                          style={{
+                            backgroundColor: `${b.categoryColor || colors.primary[500]}20`,
+                          }}
+                        >
+                          <MaterialCommunityIcons
+                            name={
+                              (b.categoryIcon as keyof typeof MaterialCommunityIcons.glyphMap) ||
+                              "tag"
+                            }
+                            size={16}
+                            color={b.categoryColor || colors.primary[500]}
+                          />
+                        </View>
+                        <Typography
+                          className="font-semibold text-sm text-text-primary flex-1"
+                          numberOfLines={1}
+                        >
+                          {b.categoryName || "Categoría"}
+                        </Typography>
+                      </View>
+
+                      <View
+                        className={`px-2 py-0.5 rounded-full ${
+                          isDanger
+                            ? "bg-danger-500/15"
+                            : isWarning
+                              ? "bg-warning-500/15"
+                              : "bg-success-500/15"
+                        }`}
+                      >
+                        <Typography
+                          className={`text-xs font-bold ${
+                            isDanger
+                              ? "text-danger-500"
+                              : isWarning
+                                ? "text-warning-500"
+                                : "text-success-500"
+                          }`}
+                        >
+                          {pct}%
+                        </Typography>
+                      </View>
+                    </View>
+
+                    {/* Barra de progreso */}
+                    <View className="h-2 bg-surface-700 rounded-full overflow-hidden">
+                      <View
+                        className={`h-full rounded-full ${
+                          isDanger
+                            ? "bg-danger-500"
+                            : isWarning
+                              ? "bg-warning-500"
+                              : "bg-success-500"
+                        }`}
+                        style={{ width: `${Math.min(100, pct)}%` }}
+                      />
+                    </View>
+
+                    <View className="flex-row justify-between">
+                      <Typography
+                        variant="caption"
+                        muted
+                        className="text-[11px]"
+                      >
+                        Gastado: {formatCurrency(spent, b.currency)}
+                      </Typography>
+                      <Typography
+                        variant="caption"
+                        muted
+                        className="text-[11px] font-semibold text-text-primary"
+                      >
+                        Límite: {formatCurrency(limitAmount, b.currency)}
+                      </Typography>
+                    </View>
+                  </Card>
+                </Pressable>
+              );
+            })
           )}
         </View>
 
@@ -612,11 +968,35 @@ export default function DashboardScreen() {
             {/* Cabecera del modal */}
             <View className="flex-row items-center justify-between mb-4">
               <View className="flex-row items-center gap-3">
-                <Image
-                  source={require("../../assets/icon.png")}
-                  style={{ width: 40, height: 40 }}
-                  resizeMode="contain"
-                />
+                <View
+                  className="w-10 h-10 rounded-xl overflow-hidden shrink-0 relative"
+                  style={{
+                    width: 40,
+                    height: 40,
+                    minWidth: 40,
+                    minHeight: 40,
+                    maxWidth: 40,
+                    maxHeight: 40,
+                    borderRadius: 10,
+                    overflow: "hidden",
+                    position: "relative",
+                  }}
+                >
+                  <Image
+                    source={require("../../assets/icon.png")}
+                    className="w-10 h-10 rounded-xl"
+                    style={{
+                      width: 40,
+                      height: 40,
+                      minWidth: 40,
+                      minHeight: 40,
+                      maxWidth: 40,
+                      maxHeight: 40,
+                      position: "relative",
+                    }}
+                    resizeMode="contain"
+                  />
+                </View>
                 <View>
                   <Typography variant="h3">{appName}</Typography>
                   <Typography variant="caption" muted className="text-[11px]">
@@ -770,6 +1150,149 @@ export default function DashboardScreen() {
                 )}
               </View>
             )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ── Modal: Configurar Presupuesto por Categoría ──────── */}
+      <Modal
+        visible={showBudgetModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowBudgetModal(false)}
+      >
+        <Pressable
+          onPress={() => setShowBudgetModal(false)}
+          className="flex-1 bg-black/50 items-center justify-center px-5"
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            className="w-full max-w-sm bg-surface-800 rounded-3xl p-5 border border-surface-600/80 shadow-lg gap-4"
+          >
+            <View className="flex-row items-center justify-between">
+              <View>
+                <Typography variant="h3">Presupuesto mensual</Typography>
+                <Typography variant="caption" muted className="text-xs">
+                  Establece un límite de gasto para este mes
+                </Typography>
+              </View>
+              <Pressable
+                onPress={() => setShowBudgetModal(false)}
+                className="w-8 h-8 rounded-full bg-surface-700 items-center justify-center active:bg-surface-600"
+              >
+                <MaterialCommunityIcons
+                  name="close"
+                  size={16}
+                  color={colors.text.secondary}
+                />
+              </Pressable>
+            </View>
+
+            {/* Categorías */}
+            <View className="gap-1.5">
+              <Typography variant="label" className="text-xs">
+                Selecciona categoría
+              </Typography>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerClassName="gap-2 py-1"
+              >
+                {expenseCategories.map((cat) => {
+                  const isSel = budgetCatId === cat.id;
+                  return (
+                    <Pressable
+                      key={cat.id}
+                      onPress={() => {
+                        setBudgetCatId(cat.id);
+                        const existing = budgets.find(
+                          (b) => b.categoryId === cat.id,
+                        );
+                        if (existing) {
+                          setBudgetAmountStr(String(existing.amount));
+                        }
+                      }}
+                      className={`flex-row items-center px-3 py-2 rounded-2xl gap-2 border ${
+                        isSel
+                          ? "bg-primary-600 border-primary-600"
+                          : "bg-surface-700/60 border-transparent active:bg-surface-600"
+                      }`}
+                    >
+                      <MaterialCommunityIcons
+                        name={
+                          (cat.icon as keyof typeof MaterialCommunityIcons.glyphMap) ||
+                          "tag"
+                        }
+                        size={14}
+                        color={isSel ? colors.white : cat.color}
+                      />
+                      <Typography
+                        className={`text-xs ${
+                          isSel
+                            ? "font-semibold text-white"
+                            : "text-text-primary"
+                        }`}
+                      >
+                        {cat.name}
+                      </Typography>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
+            {/* Importe Límite */}
+            <View className="gap-1.5">
+              <Typography variant="label" className="text-xs">
+                Monto límite mensual ({displayCurrencies[0] || "ARS"})
+              </Typography>
+              <TextInput
+                value={budgetAmountStr}
+                onChangeText={setBudgetAmountStr}
+                placeholder="0,00"
+                placeholderTextColor={colors.text.muted}
+                keyboardType="decimal-pad"
+                className="bg-surface-700/60 p-3 rounded-2xl text-text-primary text-xl font-bold"
+                style={{ fontFamily: "Inter_700Bold" }}
+              />
+            </View>
+
+            {/* Botones de acción */}
+            <View className="gap-2 pt-2">
+              <Button
+                title={
+                  budgets.some((b) => b.categoryId === budgetCatId)
+                    ? "Actualizar presupuesto"
+                    : "Guardar presupuesto"
+                }
+                onPress={handleSaveBudget}
+                loading={setBudgetMutation.isPending}
+                disabled={
+                  !budgetCatId ||
+                  !budgetAmountStr ||
+                  isNaN(parseFloat(budgetAmountStr.replace(",", "."))) ||
+                  parseFloat(budgetAmountStr.replace(",", ".")) <= 0
+                }
+              />
+
+              {Boolean(budgets.find((b) => b.categoryId === budgetCatId)) && (
+                <Button
+                  title="Eliminar presupuesto"
+                  variant="danger"
+                  onPress={() => {
+                    const existing = budgets.find(
+                      (b) => b.categoryId === budgetCatId,
+                    );
+                    if (existing) {
+                      deleteBudgetMutation.mutate(existing.id, {
+                        onSuccess: () => setShowBudgetModal(false),
+                      });
+                    }
+                  }}
+                  loading={deleteBudgetMutation.isPending}
+                />
+              )}
+            </View>
           </Pressable>
         </Pressable>
       </Modal>

@@ -21,6 +21,7 @@ import { Button, Card, PieChart, Typography } from "@/components/ui";
 import type { PieChartDataItem } from "@/components/ui/PieChart";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useAnnualReport, useGoals, useMonthlyReport } from "@/hooks/useGoals";
+import { useInstallments } from "@/hooks/useInstallments";
 import {
   type ProjectionScenario,
   useReportsStore,
@@ -81,8 +82,74 @@ export default function ReportsScreen() {
   const annualReport = annualQuery.data?.data;
   const accounts = accountsData?.data ?? [];
   const goals = goalsData?.data ?? [];
+  const { data: installmentsData } = useInstallments();
+  const installments = React.useMemo(
+    () => installmentsData?.data ?? [],
+    [installmentsData],
+  );
 
   const currentReport = isMonthly ? monthlyReport : annualReport;
+
+  // ── Comparativa Mes a Mes (MoM) ──────────────────────────────────────────
+  const currentMonthNum = selectedMonth;
+  const currentMonthBreakdown = annualReport?.monthlyBreakdown?.find(
+    (m) => m.month === currentMonthNum,
+  );
+  const prevMonthNum = currentMonthNum === 1 ? 12 : currentMonthNum - 1;
+  const prevMonthBreakdown = annualReport?.monthlyBreakdown?.find(
+    (m) => m.month === prevMonthNum,
+  );
+
+  const momComparison = React.useMemo(() => {
+    if (!currentMonthBreakdown || !prevMonthBreakdown) return null;
+    const incomeDiff = currentMonthBreakdown.income - prevMonthBreakdown.income;
+    const incomePct =
+      prevMonthBreakdown.income > 0
+        ? (incomeDiff / prevMonthBreakdown.income) * 100
+        : null;
+
+    const expenseDiff =
+      currentMonthBreakdown.expense - prevMonthBreakdown.expense;
+    const expensePct =
+      prevMonthBreakdown.expense > 0
+        ? (expenseDiff / prevMonthBreakdown.expense) * 100
+        : null;
+
+    return {
+      incomeDiff,
+      incomePct,
+      expenseDiff,
+      expensePct,
+      prevMonthName: prevMonthBreakdown.monthName,
+      prevIncome: prevMonthBreakdown.income,
+      prevExpense: prevMonthBreakdown.expense,
+    };
+  }, [currentMonthBreakdown, prevMonthBreakdown]);
+
+  // ── Cuotas Futuras Comprometidas para Proyección ─────────────────────────
+  const futureInstallmentsByHorizon = React.useMemo(() => {
+    const activePlans = installments.filter((p) => p.status === "active");
+    const getCommittedInMonths = (monthsAhead: number) => {
+      return activePlans.reduce((sum, p) => {
+        const remaining = Math.max(0, p.installmentsCount - (p.paidInstallmentsCount ?? 0));
+        const willPayInHorizon = Math.min(remaining, monthsAhead);
+        return sum + willPayInHorizon * p.installmentAmount;
+      }, 0);
+    };
+
+    return {
+      next3m: getCommittedInMonths(3),
+      next6m: getCommittedInMonths(6),
+      next12m: getCommittedInMonths(12),
+      totalPendingDebt: activePlans.reduce(
+        (sum, p) =>
+          sum +
+          Math.max(0, p.installmentsCount - (p.paidInstallmentsCount ?? 0)) *
+            p.installmentAmount,
+        0,
+      ),
+    };
+  }, [installments]);
 
   // ── Cálculos de Proyección Financiera ───────────────────────────────────────
   // 1. Patrimonio inicial actual (Cuentas con saldos negativos descontados + Metas en ARS)
@@ -171,9 +238,12 @@ export default function ReportsScreen() {
     projectedMonthlyNet >= 0 ? colors.success[500] : colors.danger[500];
 
   // Manejo de categorías según el tipo seleccionado (gastos o ingresos)
-  const expenseCategories: CategorySummary[] =
-    currentReport?.byExpenseCategory ??
-    (isMonthly ? monthlyReport?.byCategory ?? [] : []);
+  const expenseCategories: CategorySummary[] = React.useMemo(() => {
+    return (
+      currentReport?.byExpenseCategory ??
+      (isMonthly ? monthlyReport?.byCategory ?? [] : [])
+    );
+  }, [currentReport, isMonthly, monthlyReport]);
 
   const incomeCategories: CategorySummary[] =
     currentReport?.byIncomeCategory ?? [];
@@ -184,6 +254,14 @@ export default function ReportsScreen() {
   const totalIncome = currentReport?.totalIncome ?? 0;
   const totalExpenses = currentReport?.totalExpenses ?? 0;
   const netBalance = currentReport?.netBalance ?? 0;
+
+  // Detección de aumentos anómalos de gasto por categoría (+25% o concentración >30%)
+  const spendingAnomalies = React.useMemo(() => {
+    if (!isMonthly || !expenseCategories.length) return [];
+    return expenseCategories.filter(
+      (cat) => cat.percentage >= 30 && cat.total > 5000,
+    );
+  }, [isMonthly, expenseCategories]);
 
   // Datos formateados para el gráfico de torta / dona
   const pieChartData: PieChartDataItem[] = activeCategories.map((c) => ({
@@ -751,6 +829,57 @@ export default function ReportsScreen() {
                 </Card>
               </View>
             )}
+
+            {/* ── Cuotas futuras comprometidas ───────────────────────── */}
+            {futureInstallmentsByHorizon.totalPendingDebt > 0 && (
+              <View className="gap-2.5">
+                <Typography variant="h2">Cuotas futuras comprometidas</Typography>
+                <Card className="p-4 gap-3">
+                  <View className="flex-row items-center justify-between">
+                    <View className="flex-row items-center gap-2">
+                      <MaterialCommunityIcons
+                        name="credit-card-clock"
+                        size={18}
+                        color={colors.primary[500]}
+                      />
+                      <Typography className="text-xs font-semibold text-text-primary">
+                        Deuda total en cuotas por cancelar
+                      </Typography>
+                    </View>
+                    <Typography className="text-sm font-bold text-danger-500">
+                      {formatCurrency(futureInstallmentsByHorizon.totalPendingDebt)}
+                    </Typography>
+                  </View>
+
+                  <View className="flex-row gap-2 pt-1">
+                    <View className="flex-1 bg-surface-700/60 p-2.5 rounded-xl border border-surface-600/50">
+                      <Typography variant="caption" muted className="text-[10px]">
+                        En 3 meses
+                      </Typography>
+                      <Typography className="text-xs font-bold text-text-primary mt-0.5">
+                        {formatCurrency(futureInstallmentsByHorizon.next3m)}
+                      </Typography>
+                    </View>
+                    <View className="flex-1 bg-surface-700/60 p-2.5 rounded-xl border border-surface-600/50">
+                      <Typography variant="caption" muted className="text-[10px]">
+                        En 6 meses
+                      </Typography>
+                      <Typography className="text-xs font-bold text-text-primary mt-0.5">
+                        {formatCurrency(futureInstallmentsByHorizon.next6m)}
+                      </Typography>
+                    </View>
+                    <View className="flex-1 bg-surface-700/60 p-2.5 rounded-xl border border-surface-600/50">
+                      <Typography variant="caption" muted className="text-[10px]">
+                        En 12 meses
+                      </Typography>
+                      <Typography className="text-xs font-bold text-text-primary mt-0.5">
+                        {formatCurrency(futureInstallmentsByHorizon.next12m)}
+                      </Typography>
+                    </View>
+                  </View>
+                </Card>
+              </View>
+            )}
           </View>
         ) : !currentReport ? (
           <Typography variant="caption" muted className="text-center py-16">
@@ -812,6 +941,95 @@ export default function ReportsScreen() {
                     : "Déficit anual (gastos superan ingresos)"}
               </Typography>
             </Card>
+
+            {/* ── Comparativa vs Mes Anterior ────────────────────────── */}
+            {Boolean(isMonthly && momComparison) && (
+              <Card className="p-3.5 mb-3 gap-2">
+                <View className="flex-row items-center justify-between">
+                  <View className="flex-row items-center gap-1.5">
+                    <MaterialCommunityIcons
+                      name="compare-horizontal"
+                      size={16}
+                      color={colors.primary[500]}
+                    />
+                    <Typography variant="label" className="text-xs">
+                      {`Comparativa vs ${momComparison?.prevMonthName ?? "mes anterior"}`}
+                    </Typography>
+                  </View>
+                </View>
+
+                <View className="flex-row gap-2">
+                  <View className="flex-1 bg-surface-700/50 p-2.5 rounded-xl">
+                    <Typography variant="caption" muted className="text-[10px]">
+                      Ingresos
+                    </Typography>
+                    <Typography
+                      className={`text-xs font-bold mt-0.5 ${
+                        (momComparison?.incomeDiff ?? 0) >= 0
+                          ? "text-success-500"
+                          : "text-danger-500"
+                      }`}
+                    >
+                      {`${(momComparison?.incomeDiff ?? 0) >= 0 ? "+" : ""}${formatCurrency(momComparison?.incomeDiff ?? 0)}`}
+                    </Typography>
+                    {momComparison?.incomePct !== null && (
+                      <Typography variant="caption" muted className="text-[10px]">
+                        {`${(momComparison?.incomePct ?? 0) >= 0 ? "+" : ""}${(momComparison?.incomePct ?? 0).toFixed(1)}%`}
+                      </Typography>
+                    )}
+                  </View>
+
+                  <View className="flex-1 bg-surface-700/50 p-2.5 rounded-xl">
+                    <Typography variant="caption" muted className="text-[10px]">
+                      Gastos
+                    </Typography>
+                    <Typography
+                      className={`text-xs font-bold mt-0.5 ${
+                        (momComparison?.expenseDiff ?? 0) <= 0
+                          ? "text-success-500"
+                          : "text-danger-500"
+                      }`}
+                    >
+                      {`${(momComparison?.expenseDiff ?? 0) >= 0 ? "+" : ""}${formatCurrency(momComparison?.expenseDiff ?? 0)}`}
+                    </Typography>
+                    {momComparison?.expensePct !== null && (
+                      <Typography variant="caption" muted className="text-[10px]">
+                        {`${(momComparison?.expensePct ?? 0) >= 0 ? "+" : ""}${(momComparison?.expensePct ?? 0).toFixed(1)}%`}
+                      </Typography>
+                    )}
+                  </View>
+                </View>
+              </Card>
+            )}
+
+            {/* ── Alertas de aumento de gasto por categoría ──────────── */}
+            {Boolean(isMonthly && spendingAnomalies.length > 0) && (
+              <View className="gap-2 mb-3">
+                {spendingAnomalies.map((anom) => (
+                  <View
+                    key={`anom-${anom.categoryId}`}
+                    className="flex-row items-center gap-2.5 bg-warning-500/15 p-3 rounded-2xl border border-warning-500/30"
+                  >
+                    <MaterialCommunityIcons
+                      name="alert-circle-outline"
+                      size={20}
+                      color="#f79009"
+                    />
+                    <View className="flex-1">
+                      <Typography className="text-xs font-bold text-warning-500">
+                        {`Gasto concentrado: ${anom.categoryName}`}
+                      </Typography>
+                      <Typography
+                        variant="caption"
+                        className="text-[11px] text-text-secondary"
+                      >
+                        {`Representa el ${anom.percentage.toFixed(0)}% del total del mes (${formatCurrency(anom.total)}).`}
+                      </Typography>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
 
             {/* ── Switcher de Rubros: Gastos vs Ingresos ────────────── */}
             <View className="flex-row items-center justify-between mt-2 mb-3">

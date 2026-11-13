@@ -85,10 +85,20 @@ export async function handleAccounts(
 
     // ID siempre generado por el servidor (evita colisiones o inyección de ID)
     const id = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+    const balanceCents =
+      body.balanceCents != null
+        ? Math.round(Number(body.balanceCents))
+        : Math.round(balance * 100);
+    const creditLimitCents =
+      creditLimit !== null
+        ? body.creditLimitCents != null
+          ? Math.round(Number(body.creditLimitCents))
+          : Math.round(creditLimit * 100)
+        : null;
 
     await env.DB.prepare(
-      `INSERT INTO accounts (id, user_id, name, type, currency, balance, color, icon, credit_limit, closing_day, due_day)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO accounts (id, user_id, name, type, currency, balance, balance_cents, color, icon, credit_limit, credit_limit_cents, closing_day, due_day)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         id,
@@ -97,9 +107,11 @@ export async function handleAccounts(
         type,
         currency,
         balance,
+        balanceCents,
         color,
         icon,
         creditLimit,
+        creditLimitCents,
         closingDay,
         dueDay,
       )
@@ -191,11 +203,14 @@ export async function handleAccounts(
       values.push(sanitizeIcon(body.icon));
     }
     if (body.creditLimit !== undefined) {
-      fields.push("credit_limit = ?");
-      values.push(
+      const sanitizedLimit =
         body.creditLimit != null
           ? sanitizeAmount(body.creditLimit, true, false)
-          : null,
+          : null;
+      fields.push("credit_limit = ?", "credit_limit_cents = ?");
+      values.push(
+        sanitizedLimit,
+        sanitizedLimit !== null ? Math.round(sanitizedLimit * 100) : null,
       );
     }
     if (body.closingDay !== undefined) {

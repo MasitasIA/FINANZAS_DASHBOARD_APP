@@ -83,16 +83,27 @@ export async function handleGoals(
       : "active";
 
     const id = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+    const targetAmountCents =
+      body.targetAmountCents != null
+        ? Math.round(Number(body.targetAmountCents))
+        : Math.round(targetAmount * 100);
+    const currentAmountCents =
+      body.currentAmountCents != null
+        ? Math.round(Number(body.currentAmountCents))
+        : Math.round(currentAmount * 100);
+
     await env.DB.prepare(
-      `INSERT INTO savings_goals (id, user_id, name, target_amount, current_amount, currency, deadline, icon, color, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO savings_goals (id, user_id, name, target_amount, target_amount_cents, current_amount, current_amount_cents, currency, deadline, icon, color, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         id,
         userId,
         name,
         targetAmount,
+        targetAmountCents,
         currentAmount,
+        currentAmountCents,
         currency,
         deadline,
         icon,
@@ -179,9 +190,14 @@ export async function handleGoals(
     const note =
       body.note != null ? sanitizeText(body.note, 400) || null : null;
 
+    const amountCents =
+      body.amountCents != null
+        ? Math.round(Number(body.amountCents))
+        : Math.round(amount * 100);
+
     await env.DB.prepare(
-      `INSERT INTO transactions (id, user_id, author_name, account_id, category_id, type, amount, currency, description, note, date, goal_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO transactions (id, user_id, author_name, account_id, category_id, type, amount, amount_cents, currency, description, note, date, goal_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         txId,
@@ -191,6 +207,7 @@ export async function handleGoals(
         effectiveCategoryId,
         effectiveType,
         amount,
+        amountCents,
         goal.currency,
         sanitizeText(effectiveDesc, 160),
         note,
@@ -266,9 +283,11 @@ export async function handleGoals(
     const note =
       body.note != null ? sanitizeText(body.note, 400) || null : null;
 
+    const amountCents = Math.round(amount * 100);
+
     await env.DB.prepare(
-      `INSERT INTO transactions (id, user_id, author_name, account_id, category_id, type, amount, currency, description, note, date, goal_id)
-       VALUES (?, ?, ?, ?, 'cat-savings', 'income', ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO transactions (id, user_id, author_name, account_id, category_id, type, amount, amount_cents, currency, description, note, date, goal_id)
+       VALUES (?, ?, ?, ?, 'cat-savings', 'income', ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         txId,
@@ -276,6 +295,7 @@ export async function handleGoals(
         userDisplayName,
         accountId,
         amount,
+        amountCents,
         goal.currency,
         sanitizeText(`Retiro de meta: ${goal.name}`, 160),
         note,
@@ -355,14 +375,14 @@ export async function handleGoals(
     if (body.targetAmount !== undefined) {
       const targetAmount = sanitizeAmount(body.targetAmount, false, false);
       if (targetAmount === null) return error("Monto objetivo inválido", 400);
-      fields.push("target_amount = ?");
-      values.push(targetAmount);
+      fields.push("target_amount = ?", "target_amount_cents = ?");
+      values.push(targetAmount, Math.round(targetAmount * 100));
     }
     if (body.currentAmount !== undefined) {
       const currentAmount = sanitizeAmount(body.currentAmount, true, false);
       if (currentAmount === null) return error("Monto actual inválido", 400);
-      fields.push("current_amount = ?");
-      values.push(currentAmount);
+      fields.push("current_amount = ?", "current_amount_cents = ?");
+      values.push(currentAmount, Math.round(currentAmount * 100));
     }
     if (body.currency !== undefined) {
       fields.push("currency = ?");

@@ -91,10 +91,15 @@ export async function handleRecurring(
           localDate,
         );
 
+        const amountCents =
+          row.amount_cents != null
+            ? row.amount_cents
+            : Math.round(Number(row.amount) * 100);
+
         await env.DB.batch([
           env.DB.prepare(
-            `INSERT INTO transactions (id, user_id, account_id, category_id, type, amount, currency, description, note, date)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO transactions (id, user_id, account_id, category_id, type, amount, amount_cents, currency, description, note, date)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           ).bind(
             txId,
             userId,
@@ -102,6 +107,7 @@ export async function handleRecurring(
             row.category_id || defaultCategory,
             itemType,
             row.amount,
+            amountCents,
             row.currency || "ARS",
             sanitizeText(
               `${itemType === "income" ? "Ingreso automático fijo" : "Gasto automático fijo"}: ${row.name}`,
@@ -222,9 +228,14 @@ export async function handleRecurring(
 
     const id = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
 
+    const amountCents =
+      body.amountCents != null
+        ? Math.round(Number(body.amountCents))
+        : Math.round(amount * 100);
+
     await env.DB.prepare(
-      `INSERT INTO recurring_expenses (id, user_id, type, account_id, category_id, name, amount, currency, due_date, due_day, frequency, is_variable, icon, color, is_active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO recurring_expenses (id, user_id, type, account_id, category_id, name, amount, amount_cents, currency, due_date, due_day, frequency, is_variable, icon, color, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         id,
@@ -234,6 +245,7 @@ export async function handleRecurring(
         categoryId,
         name,
         amount,
+        amountCents,
         currency,
         dueDate,
         dueDay,
@@ -361,10 +373,13 @@ export async function handleRecurring(
     const nextBaseAmount =
       updateBaseAmount && customAmount !== null ? customAmount : row.amount;
 
+    const effectiveAmountCents = Math.round(effectiveAmount * 100);
+    const nextBaseAmountCents = Math.round(nextBaseAmount * 100);
+
     await env.DB.batch([
       env.DB.prepare(
-        `INSERT INTO transactions (id, user_id, account_id, category_id, type, amount, currency, description, note, date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO transactions (id, user_id, account_id, category_id, type, amount, amount_cents, currency, description, note, date)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         txId,
         userId,
@@ -372,6 +387,7 @@ export async function handleRecurring(
         row.category_id || defaultCategory,
         itemType,
         effectiveAmount,
+        effectiveAmountCents,
         row.currency || "ARS",
         sanitizeText(
           `${itemType === "income" ? "Ingreso automático" : "Gasto automático"}: ${row.name}`,
@@ -385,9 +401,9 @@ export async function handleRecurring(
       ),
       env.DB.prepare(
         `UPDATE recurring_expenses
-         SET amount = ?, last_paid_date = ?, due_date = ?, updated_at = datetime('now')
+         SET amount = ?, amount_cents = ?, last_paid_date = ?, due_date = ?, updated_at = datetime('now')
          WHERE id = ? AND user_id = ?`,
-      ).bind(nextBaseAmount, today, nextDueDate, id, userId),
+      ).bind(nextBaseAmount, nextBaseAmountCents, today, nextDueDate, id, userId),
     ]);
 
     const updated = await env.DB.prepare(
@@ -426,8 +442,8 @@ export async function handleRecurring(
     if (body.amount !== undefined) {
       const amount = sanitizeAmount(body.amount, false, false);
       if (amount === null) return error("Costo inválido", 400);
-      fields.push("amount = ?");
-      values.push(amount);
+      fields.push("amount = ?", "amount_cents = ?");
+      values.push(amount, Math.round(amount * 100));
     }
     if (body.accountId !== undefined) {
       const accountId = sanitizeIdentifier(body.accountId);

@@ -2,15 +2,29 @@ import type { D1DatabaseType } from "../types";
 
 export function toCamelCaseAccount(row: any) {
   if (!row) return null;
+  const balanceCents =
+    row.balance_cents != null
+      ? row.balance_cents
+      : Math.round((row.balance ?? 0) * 100);
+  const creditLimitCents =
+    row.credit_limit_cents != null
+      ? row.credit_limit_cents
+      : row.credit_limit != null
+        ? Math.round(row.credit_limit * 100)
+        : undefined;
+
   return {
     id: row.id,
     name: row.name,
     type: row.type,
     currency: row.currency,
-    balance: row.balance,
+    balance: balanceCents / 100,
+    balanceCents,
     color: row.color,
     icon: row.icon,
-    creditLimit: row.credit_limit,
+    creditLimit:
+      creditLimitCents != null ? creditLimitCents / 100 : row.credit_limit,
+    creditLimitCents,
     closingDay: row.closing_day,
     dueDay: row.due_day,
     createdAt: row.created_at,
@@ -20,6 +34,11 @@ export function toCamelCaseAccount(row: any) {
 
 export function toCamelCaseTransaction(row: any) {
   if (!row) return null;
+  const amountCents =
+    row.amount_cents != null
+      ? row.amount_cents
+      : Math.round((row.amount ?? 0) * 100);
+
   return {
     id: row.id,
     userId: row.user_id ?? undefined,
@@ -27,13 +46,120 @@ export function toCamelCaseTransaction(row: any) {
     accountId: row.account_id,
     categoryId: row.category_id,
     type: row.type,
-    amount: row.amount,
+    amount: amountCents / 100,
+    amountCents,
     currency: row.currency,
     description: row.description,
     note: row.note,
     date: row.date,
     toAccountId: row.to_account_id,
     goalId: row.goal_id,
+    installmentId: row.installment_id ?? undefined,
+    installmentNumber: row.installment_number ?? undefined,
+    installmentsTotal: row.installments_total ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function toCamelCaseInstallment(row: any) {
+  if (!row) return null;
+  const totalAmountCents =
+    row.total_amount_cents != null
+      ? row.total_amount_cents
+      : Math.round((row.total_amount ?? 0) * 100);
+  const cashPriceCents =
+    row.cash_price_cents != null
+      ? row.cash_price_cents
+      : Math.round((row.cash_price ?? row.total_amount ?? 0) * 100);
+  const installmentAmountCents =
+    row.installment_amount_cents != null
+      ? row.installment_amount_cents
+      : Math.round((row.installment_amount ?? 0) * 100);
+
+  return {
+    id: row.id,
+    userId: row.user_id ?? undefined,
+    accountId: row.account_id,
+    transactionId: row.transaction_id ?? undefined,
+    description: row.description,
+    totalAmount: totalAmountCents / 100,
+    totalAmountCents,
+    cashPrice: cashPriceCents / 100,
+    cashPriceCents,
+    installmentsCount: row.installments_count,
+    installmentAmount: installmentAmountCents / 100,
+    installmentAmountCents,
+    paidInstallmentsCount: row.paid_installments_count ?? 0,
+    remainingAmountCents: row.remaining_amount_cents ?? totalAmountCents,
+    firstDueDate: row.first_due_date,
+    status: row.status,
+    createdAt: row.created_at,
+  };
+}
+
+export function toCamelCaseStatement(row: any) {
+  if (!row) return null;
+  const prevCents = row.previous_balance_cents ?? 0;
+  const chargesCents = row.charges_cents ?? 0;
+  const instCents = row.installments_cents ?? 0;
+  const interestCents = row.interest_cents ?? 0;
+  const totalDueCents = row.total_due_cents ?? 0;
+  const minDueCents = row.minimum_due_cents ?? 0;
+  const paidCents = row.paid_amount_cents ?? 0;
+
+  return {
+    id: row.id,
+    userId: row.user_id ?? undefined,
+    accountId: row.account_id,
+    periodStart: row.period_start,
+    closingDate: row.closing_date,
+    dueDate: row.due_date,
+    previousBalance: prevCents / 100,
+    previousBalanceCents: prevCents,
+    charges: chargesCents / 100,
+    chargesCents,
+    installments: instCents / 100,
+    installmentsCents: instCents,
+    interest: interestCents / 100,
+    interestCents,
+    totalDue: totalDueCents / 100,
+    totalDueCents,
+    minimumDue: minDueCents / 100,
+    minimumDueCents: minDueCents,
+    paidAmount: paidCents / 100,
+    paidAmountCents: paidCents,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function toCamelCaseBudget(row: any) {
+  if (!row) return null;
+  const amountCents =
+    row.amount_cents != null
+      ? row.amount_cents
+      : Math.round((row.amount ?? 0) * 100);
+  const spentCents = row.spent_amount_cents ?? 0;
+  const pct =
+    amountCents > 0
+      ? Math.round((spentCents / amountCents) * 100)
+      : 0;
+
+  return {
+    id: row.id,
+    userId: row.user_id ?? undefined,
+    categoryId: row.category_id,
+    categoryName: row.category_name ?? undefined,
+    categoryIcon: row.category_icon ?? undefined,
+    categoryColor: row.category_color ?? undefined,
+    currency: row.currency,
+    amount: amountCents / 100,
+    amountCents,
+    spentAmount: spentCents / 100,
+    spentAmountCents: spentCents,
+    percentage: pct,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -41,11 +167,22 @@ export function toCamelCaseTransaction(row: any) {
 
 export function toCamelCaseGoal(row: any) {
   if (!row) return null;
+  const targetAmountCents =
+    row.target_amount_cents != null
+      ? row.target_amount_cents
+      : Math.round((row.target_amount ?? 0) * 100);
+  const currentAmountCents =
+    row.current_amount_cents != null
+      ? row.current_amount_cents
+      : Math.round((row.current_amount ?? 0) * 100);
+
   return {
     id: row.id,
     name: row.name,
-    targetAmount: row.target_amount,
-    currentAmount: row.current_amount,
+    targetAmount: targetAmountCents / 100,
+    targetAmountCents,
+    currentAmount: currentAmountCents / 100,
+    currentAmountCents,
     currency: row.currency,
     deadline: row.deadline,
     icon: row.icon,
@@ -70,11 +207,17 @@ export function toCamelCaseCategory(row: any) {
 
 export function toCamelCaseRecurringExpense(row: any) {
   if (!row) return null;
+  const amountCents =
+    row.amount_cents != null
+      ? row.amount_cents
+      : Math.round((row.amount ?? 0) * 100);
+
   return {
     id: row.id,
     type: row.type === "income" ? "income" : "expense",
     name: row.name,
-    amount: row.amount,
+    amount: amountCents / 100,
+    amountCents,
     currency: row.currency,
     accountId: row.account_id,
     accountName: row.account_name ?? undefined,

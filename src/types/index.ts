@@ -49,9 +49,11 @@ export interface Account {
   type: AccountType;
   currency: Currency;
   balance: number;
+  balanceCents?: number; // Balance exacto en centavos enteros
   color: string; // hex color para el avatar
   icon: IconName | string; // nombre del ícono de @expo/vector-icons
   creditLimit?: number; // Límite de crédito asignado (para tarjetas)
+  creditLimitCents?: number; // Límite exacto en centavos enteros
   closingDay?: number; // Día del mes en que cierra el resumen (1-31)
   dueDay?: number; // Día del mes en que vence el pago (1-31)
   isShared?: boolean; // Si la cuenta está compartida con otros usuarios
@@ -82,6 +84,7 @@ export interface Transaction {
   categoryId: string;
   type: TransactionType;
   amount: number;
+  amountCents?: number; // Monto exacto en centavos enteros
   currency: Currency;
   description: string;
   note?: string;
@@ -92,6 +95,10 @@ export interface Transaction {
   toAccountId?: string;
   // Vinculación con meta de ahorro
   goalId?: string;
+  // Vinculación con compras en cuotas (tarjetas de crédito)
+  installmentId?: string;
+  installmentNumber?: number;
+  installmentsTotal?: number;
 }
 
 // ─── Savings Goal ────────────────────────────────────────────────────────────
@@ -100,7 +107,9 @@ export interface SavingsGoal {
   id: string;
   name: string;
   targetAmount: number;
+  targetAmountCents?: number; // Meta en centavos enteros
   currentAmount: number;
+  currentAmountCents?: number; // Acumulado en centavos enteros
   currency: Currency;
   deadline?: string; // ISO 8601
   icon: IconName | string;
@@ -127,6 +136,104 @@ export interface GoalWithdrawPayload {
   amount: number;
   note?: string;
   date?: string;
+}
+
+// ─── Tarjetas de Crédito: Cuotas & Resúmenes ──────────────────────────────────
+
+export type InstallmentStatus = "active" | "completed" | "cancelled";
+export type StatementStatus =
+  | "open"
+  | "closed"
+  | "paid_partial"
+  | "paid_full"
+  | "overdue";
+
+export interface CreditCardInstallment {
+  id: string;
+  userId?: string;
+  accountId: string;
+  transactionId?: string;
+  description: string;
+  totalAmount: number;
+  totalAmountCents: number;
+  cashPrice: number;
+  cashPriceCents: number;
+  installmentsCount: number;
+  installmentAmount: number;
+  installmentAmountCents: number;
+  paidInstallmentsCount?: number;
+  remainingAmountCents?: number;
+  firstDueDate: string; // YYYY-MM-DD
+  status: InstallmentStatus;
+  createdAt: string;
+}
+
+export interface CreditCardStatement {
+  id: string;
+  userId?: string;
+  accountId: string;
+  periodStart: string; // YYYY-MM-DD
+  closingDate: string; // YYYY-MM-DD
+  dueDate: string; // YYYY-MM-DD
+  previousBalance: number;
+  previousBalanceCents: number;
+  charges: number;
+  chargesCents: number;
+  installments: number;
+  installmentsCents: number;
+  interest: number;
+  interestCents: number;
+  totalDue: number;
+  totalDueCents: number;
+  minimumDue: number;
+  minimumDueCents: number;
+  paidAmount: number;
+  paidAmountCents: number;
+  status: StatementStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateInstallmentPayload {
+  accountId: string;
+  description: string;
+  totalAmount: number;
+  cashPrice?: number;
+  installmentsCount: number;
+  firstDueDate?: string;
+  categoryId?: string;
+}
+
+export interface PayStatementPayload {
+  amount: number;
+  fromAccountId: string; // Cuenta de débito/efectivo de donde sale el pago
+  date?: string;
+  note?: string;
+}
+
+// ─── Presupuestos Mensuales ──────────────────────────────────────────────────
+
+export interface Budget {
+  id: string;
+  userId?: string;
+  categoryId: string;
+  categoryName?: string;
+  categoryIcon?: string;
+  categoryColor?: string;
+  currency: Currency;
+  amount: number;
+  amountCents: number;
+  spentAmount?: number;
+  spentAmountCents?: number;
+  percentage?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SetBudgetPayload {
+  categoryId: string;
+  currency?: Currency;
+  amount: number;
 }
 
 // ─── Reportes ────────────────────────────────────────────────────────────────
@@ -190,6 +297,7 @@ export interface RecurringExpense {
   type: RecurringItemType; // 'expense' (gasto automático) | 'income' (ingreso automático)
   name: string; // Nombre (ej. "Netflix", "Alquiler", "Sueldo", "Honorarios")
   amount: number; // Monto fijado base
+  amountCents?: number; // Monto fijado en centavos enteros
   currency: Currency;
   accountId: string; // Cuenta donde se descuenta o acredita
   accountName?: string;

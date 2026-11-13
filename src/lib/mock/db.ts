@@ -5,7 +5,10 @@
 
 import type {
   Account,
+  Budget,
   Category,
+  CreditCardInstallment,
+  CreditCardStatement,
   RecurringExpense,
   SavingsGoal,
   Transaction,
@@ -294,6 +297,87 @@ export const mockRecurringExpenses: RecurringExpense[] = [
     lastPaidDate: "2026-10-01",
     createdAt:    "2024-01-01T00:00:00Z",
     updatedAt:    "2026-10-01T00:00:00Z",
+  },
+];
+
+// ─── Tarjetas de Crédito: Cuotas & Resúmenes Mock ─────────────────────────────
+export const mockInstallments: CreditCardInstallment[] = [
+  {
+    id: "inst-1",
+    accountId: "acc-4",
+    description: "Smart TV 55 Pulgadas 4K",
+    totalAmount: 480_000,
+    totalAmountCents: 48_000_000,
+    cashPrice: 420_000,
+    cashPriceCents: 42_000_000,
+    installmentsCount: 6,
+    installmentAmount: 80_000,
+    installmentAmountCents: 8_000_000,
+    paidInstallmentsCount: 2,
+    remainingAmountCents: 32_000_000,
+    firstDueDate: "2026-10-05",
+    status: "active",
+    createdAt: "2026-09-15T00:00:00Z",
+  },
+];
+
+export const mockStatements: CreditCardStatement[] = [
+  {
+    id: "stmt-1",
+    accountId: "acc-4",
+    periodStart: "2026-09-23",
+    closingDate: "2026-10-22",
+    dueDate: "2026-11-05",
+    previousBalance: 0,
+    previousBalanceCents: 0,
+    charges: 142_500,
+    chargesCents: 14_250_000,
+    installments: 80_000,
+    installmentsCents: 8_000_000,
+    interest: 0,
+    interestCents: 0,
+    totalDue: 142_500,
+    totalDueCents: 14_250_000,
+    minimumDue: 14_250,
+    minimumDueCents: 1_425_000,
+    paidAmount: 0,
+    paidAmountCents: 0,
+    status: "closed",
+    createdAt: "2026-10-22T00:00:00Z",
+    updatedAt: "2026-10-22T00:00:00Z",
+  },
+];
+
+export const mockBudgets: Budget[] = [
+  {
+    id: "bdg-1",
+    categoryId: "cat-food",
+    categoryName: "Comida",
+    categoryIcon: "food-fork-drink",
+    categoryColor: "#f97066",
+    currency: "ARS",
+    amount: 150_000,
+    amountCents: 15_000_000,
+    spentAmount: 85_000,
+    spentAmountCents: 8_500_000,
+    percentage: 57,
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-01T00:00:00Z",
+  },
+  {
+    id: "bdg-2",
+    categoryId: "cat-services",
+    categoryName: "Servicios",
+    categoryIcon: "lightning-bolt",
+    categoryColor: "#fdb022",
+    currency: "ARS",
+    amount: 60_000,
+    amountCents: 6_000_000,
+    spentAmount: 55_000,
+    spentAmountCents: 5_500_000,
+    percentage: 92,
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-01T00:00:00Z",
   },
 ];
 

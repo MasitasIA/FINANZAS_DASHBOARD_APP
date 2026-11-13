@@ -4,19 +4,21 @@
 
 -- ── Cuentas ──────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS accounts (
-  id           TEXT    PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  user_id      TEXT    NOT NULL DEFAULT 'legacy',
-  name         TEXT    NOT NULL,
-  type         TEXT    NOT NULL CHECK (type IN ('checking','savings','investment','cash','credit')),
-  currency     TEXT    NOT NULL DEFAULT 'ARS' CHECK (currency IN ('ARS','USD','EUR')),
-  balance      REAL    NOT NULL DEFAULT 0,
-  color        TEXT    NOT NULL DEFAULT '#e23d28',
-  icon         TEXT    NOT NULL DEFAULT 'wallet',
-  credit_limit REAL,
-  closing_day  INTEGER CHECK (closing_day BETWEEN 1 AND 31),
-  due_day      INTEGER CHECK (due_day BETWEEN 1 AND 31),
-  created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
-  updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+  id                 TEXT    PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  user_id            TEXT    NOT NULL DEFAULT 'legacy',
+  name               TEXT    NOT NULL,
+  type               TEXT    NOT NULL CHECK (type IN ('checking','savings','investment','cash','credit')),
+  currency           TEXT    NOT NULL DEFAULT 'ARS' CHECK (currency IN ('ARS','USD','EUR')),
+  balance            REAL    NOT NULL DEFAULT 0,
+  balance_cents      INTEGER NOT NULL DEFAULT 0,
+  color              TEXT    NOT NULL DEFAULT '#e23d28',
+  icon               TEXT    NOT NULL DEFAULT 'wallet',
+  credit_limit       REAL,
+  credit_limit_cents INTEGER,
+  closing_day        INTEGER CHECK (closing_day BETWEEN 1 AND 31),
+  due_day            INTEGER CHECK (due_day BETWEEN 1 AND 31),
+  created_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+  updated_at         TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id);
@@ -63,12 +65,16 @@ CREATE TABLE IF NOT EXISTS transactions (
   category_id   TEXT    NOT NULL REFERENCES categories(id),
   type          TEXT    NOT NULL CHECK (type IN ('income','expense','transfer')),
   amount        REAL    NOT NULL CHECK (amount > 0),
+  amount_cents  INTEGER NOT NULL DEFAULT 0 CHECK (amount_cents >= 0),
   currency      TEXT    NOT NULL DEFAULT 'ARS',
   description   TEXT    NOT NULL DEFAULT '',
   note          TEXT,
   date          TEXT    NOT NULL DEFAULT (date('now')),
   to_account_id TEXT    REFERENCES accounts(id),
   goal_id       TEXT    REFERENCES savings_goals(id) ON DELETE SET NULL,
+  installment_id TEXT,
+  installment_number INTEGER,
+  installments_total INTEGER,
   created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
   updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -81,18 +87,20 @@ CREATE INDEX IF NOT EXISTS idx_transactions_goal    ON transactions(goal_id);
 
 -- ── Metas de ahorro ───────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS savings_goals (
-  id             TEXT    PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  user_id        TEXT    NOT NULL DEFAULT 'legacy',
-  name           TEXT    NOT NULL,
-  target_amount  REAL    NOT NULL CHECK (target_amount > 0),
-  current_amount REAL    NOT NULL DEFAULT 0,
-  currency       TEXT    NOT NULL DEFAULT 'ARS',
-  deadline       TEXT,
-  icon           TEXT    NOT NULL DEFAULT 'piggy-bank',
-  color          TEXT    NOT NULL DEFAULT '#e23d28',
-  status         TEXT    NOT NULL DEFAULT 'active' CHECK (status IN ('active','completed','paused')),
-  created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
-  updated_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+  id                   TEXT    PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  user_id              TEXT    NOT NULL DEFAULT 'legacy',
+  name                 TEXT    NOT NULL,
+  target_amount        REAL    NOT NULL CHECK (target_amount > 0),
+  target_amount_cents  INTEGER NOT NULL DEFAULT 0,
+  current_amount       REAL    NOT NULL DEFAULT 0,
+  current_amount_cents INTEGER NOT NULL DEFAULT 0,
+  currency             TEXT    NOT NULL DEFAULT 'ARS',
+  deadline             TEXT,
+  icon                 TEXT    NOT NULL DEFAULT 'piggy-bank',
+  color                TEXT    NOT NULL DEFAULT '#e23d28',
+  status               TEXT    NOT NULL DEFAULT 'active' CHECK (status IN ('active','completed','paused')),
+  created_at           TEXT    NOT NULL DEFAULT (datetime('now')),
+  updated_at           TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_goals_user ON savings_goals(user_id);
@@ -106,6 +114,7 @@ CREATE TABLE IF NOT EXISTS recurring_expenses (
   category_id    TEXT    NOT NULL DEFAULT 'cat-services' REFERENCES categories(id),
   name           TEXT    NOT NULL,
   amount         REAL    NOT NULL CHECK (amount > 0),
+  amount_cents   INTEGER NOT NULL DEFAULT 0 CHECK (amount_cents >= 0),
   currency       TEXT    NOT NULL DEFAULT 'ARS' CHECK (currency IN ('ARS','USD','EUR')),
   due_date       TEXT    NOT NULL DEFAULT (date('now')),
   due_day        INTEGER NOT NULL DEFAULT 1 CHECK (due_day BETWEEN 1 AND 31),
@@ -120,6 +129,62 @@ CREATE TABLE IF NOT EXISTS recurring_expenses (
 );
 
 CREATE INDEX IF NOT EXISTS idx_recurring_expenses_user ON recurring_expenses(user_id, due_day ASC);
+
+-- ── Tarjetas de Crédito: Compras en Cuotas ───────────────────────────────────
+CREATE TABLE IF NOT EXISTS credit_card_installments (
+  id                       TEXT    PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  user_id                  TEXT    NOT NULL DEFAULT 'legacy',
+  account_id               TEXT    NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  transaction_id           TEXT    REFERENCES transactions(id) ON DELETE SET NULL,
+  description              TEXT    NOT NULL,
+  total_amount_cents       INTEGER NOT NULL CHECK (total_amount_cents > 0),
+  cash_price_cents         INTEGER NOT NULL CHECK (cash_price_cents > 0),
+  installments_count       INTEGER NOT NULL CHECK (installments_count > 1),
+  installment_amount_cents INTEGER NOT NULL CHECK (installment_amount_cents > 0),
+  first_due_date           TEXT    NOT NULL,
+  status                   TEXT    NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'cancelled')),
+  created_at               TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_installments_account ON credit_card_installments(account_id, status);
+CREATE INDEX IF NOT EXISTS idx_installments_user    ON credit_card_installments(user_id, status);
+
+-- ── Tarjetas de Crédito: Resúmenes de Período ────────────────────────────────
+CREATE TABLE IF NOT EXISTS credit_card_statements (
+  id                     TEXT    PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  user_id                TEXT    NOT NULL DEFAULT 'legacy',
+  account_id             TEXT    NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  period_start           TEXT    NOT NULL,
+  closing_date           TEXT    NOT NULL,
+  due_date               TEXT    NOT NULL,
+  previous_balance_cents INTEGER NOT NULL DEFAULT 0,
+  charges_cents          INTEGER NOT NULL DEFAULT 0,
+  installments_cents     INTEGER NOT NULL DEFAULT 0,
+  interest_cents         INTEGER NOT NULL DEFAULT 0,
+  total_due_cents        INTEGER NOT NULL,
+  minimum_due_cents      INTEGER NOT NULL DEFAULT 0,
+  paid_amount_cents      INTEGER NOT NULL DEFAULT 0,
+  status                 TEXT    NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed', 'paid_partial', 'paid_full', 'overdue')),
+  created_at             TEXT    NOT NULL DEFAULT (datetime('now')),
+  updated_at             TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_statements_account ON credit_card_statements(account_id, closing_date DESC);
+CREATE INDEX IF NOT EXISTS idx_statements_user    ON credit_card_statements(user_id, status);
+
+-- ── Presupuestos Mensuales por Categoría ──────────────────────────────────────
+CREATE TABLE IF NOT EXISTS budgets (
+  id           TEXT    PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  user_id      TEXT    NOT NULL DEFAULT 'legacy',
+  category_id  TEXT    NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+  currency     TEXT    NOT NULL DEFAULT 'ARS' CHECK (currency IN ('ARS','USD','EUR')),
+  amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+  created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+  updated_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, category_id, currency)
+);
+
+CREATE INDEX IF NOT EXISTS idx_budgets_user ON budgets(user_id, currency);
 
 -- ── Configuración por usuario (hora de aviso para montos variables + tema) ────
 -- theme: 'light' (por defecto) | 'dark'
@@ -163,7 +228,7 @@ CREATE INDEX IF NOT EXISTS idx_share_invites_resource ON share_invites(resource_
 INSERT OR IGNORE INTO accounts (id, user_id, name, type, currency, balance, color, icon)
 VALUES ('direct-goal', 'system', 'Ingreso directo a meta', 'savings', 'ARS', 0, '#17b26a', 'piggy-bank');
 
--- ── Triggers: actualizar balance en cuentas y metas (con soporte para recursos compartidos e ingresos directos a metas) ──
+-- ── Triggers: actualizar balance en cuentas y metas (con soporte para centavos enteros, recursos compartidos e ingresos directos a metas) ──
 
 -- 1. Al insertar transacción
 DROP TRIGGER IF EXISTS update_balance_after_insert;
@@ -172,13 +237,19 @@ AFTER INSERT ON transactions
 BEGIN
   -- Actualiza balance en cuenta origen (si pertenece al usuario o es miembro compartido, ignorando ingresos directos a metas)
   UPDATE accounts
-  SET    balance    = balance + CASE
-                                  WHEN NEW.type = 'income'   THEN NEW.amount
-                                  WHEN NEW.type = 'expense'  THEN -NEW.amount
-                                  WHEN NEW.type = 'transfer' THEN -NEW.amount
-                                  ELSE 0
-                                END,
-         updated_at = datetime('now')
+  SET    balance_cents = COALESCE(balance_cents, CAST(ROUND(balance * 100) AS INTEGER)) + CASE
+                           WHEN NEW.type = 'income'   THEN COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                           WHEN NEW.type = 'expense'  THEN -COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                           WHEN NEW.type = 'transfer' THEN -COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                           ELSE 0
+                         END,
+         balance       = (COALESCE(balance_cents, CAST(ROUND(balance * 100) AS INTEGER)) + CASE
+                           WHEN NEW.type = 'income'   THEN COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                           WHEN NEW.type = 'expense'  THEN -COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                           WHEN NEW.type = 'transfer' THEN -COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                           ELSE 0
+                         END) / 100.0,
+         updated_at    = datetime('now')
   WHERE  id = NEW.account_id
     AND  id != 'direct-goal'
     AND  (
@@ -191,8 +262,9 @@ BEGIN
 
   -- Si es transferencia, acredita en la cuenta destino (si pertenece al usuario o es miembro compartido)
   UPDATE accounts
-  SET    balance    = balance + NEW.amount,
-         updated_at = datetime('now')
+  SET    balance_cents = COALESCE(balance_cents, CAST(ROUND(balance * 100) AS INTEGER)) + COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER)),
+         balance       = (COALESCE(balance_cents, CAST(ROUND(balance * 100) AS INTEGER)) + COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))) / 100.0,
+         updated_at    = datetime('now')
   WHERE  id = NEW.to_account_id
     AND  NEW.to_account_id IS NOT NULL
     AND  NEW.type = 'transfer'
@@ -205,26 +277,29 @@ BEGIN
     );
 
   -- Si está vinculada a una meta de ahorro:
-  -- • Aporte desde cuenta (type IN ('expense', 'transfer')) -> suma a la meta (+NEW.amount)
-  -- • Ingreso directo a meta (type = 'income' AND category_id != 'cat-savings') -> suma a la meta (+NEW.amount)
-  -- • Retiro desde meta hacia cuenta (type = 'income' AND category_id = 'cat-savings') -> resta de la meta (-NEW.amount)
   UPDATE savings_goals
-  SET    current_amount = MAX(0, current_amount + CASE
-                                                    WHEN NEW.type IN ('expense', 'transfer') THEN NEW.amount
-                                                    WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN NEW.amount
-                                                    WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -NEW.amount
-                                                    ELSE 0
-                                                  END),
-         status         = CASE
-                            WHEN (current_amount + CASE
-                                                    WHEN NEW.type IN ('expense', 'transfer') THEN NEW.amount
-                                                    WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN NEW.amount
-                                                    WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -NEW.amount
-                                                    ELSE 0
-                                                  END) >= target_amount THEN 'completed'
-                            ELSE 'active'
-                          END,
-         updated_at     = datetime('now')
+  SET    current_amount_cents = MAX(0, COALESCE(current_amount_cents, CAST(ROUND(current_amount * 100) AS INTEGER)) + CASE
+                                  WHEN NEW.type IN ('expense', 'transfer') THEN COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                  WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                  WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                  ELSE 0
+                                END),
+         current_amount       = MAX(0, COALESCE(current_amount_cents, CAST(ROUND(current_amount * 100) AS INTEGER)) + CASE
+                                  WHEN NEW.type IN ('expense', 'transfer') THEN COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                  WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                  WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                  ELSE 0
+                                END) / 100.0,
+         status               = CASE
+                                  WHEN (COALESCE(current_amount_cents, CAST(ROUND(current_amount * 100) AS INTEGER)) + CASE
+                                    WHEN NEW.type IN ('expense', 'transfer') THEN COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                    WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                    WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                    ELSE 0
+                                  END) >= COALESCE(target_amount_cents, CAST(ROUND(target_amount * 100) AS INTEGER)) THEN 'completed'
+                                  ELSE 'active'
+                                END,
+         updated_at           = datetime('now')
   WHERE  id = NEW.goal_id
     AND  NEW.goal_id IS NOT NULL
     AND  (
@@ -243,13 +318,19 @@ AFTER DELETE ON transactions
 BEGIN
   -- Revierte el impacto en la cuenta origen
   UPDATE accounts
-  SET    balance    = balance - CASE
-                                  WHEN OLD.type = 'income'   THEN OLD.amount
-                                  WHEN OLD.type = 'expense'  THEN -OLD.amount
-                                  WHEN OLD.type = 'transfer' THEN -OLD.amount
-                                  ELSE 0
-                                END,
-         updated_at = datetime('now')
+  SET    balance_cents = COALESCE(balance_cents, CAST(ROUND(balance * 100) AS INTEGER)) - CASE
+                           WHEN OLD.type = 'income'   THEN COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                           WHEN OLD.type = 'expense'  THEN -COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                           WHEN OLD.type = 'transfer' THEN -COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                           ELSE 0
+                         END,
+         balance       = (COALESCE(balance_cents, CAST(ROUND(balance * 100) AS INTEGER)) - CASE
+                           WHEN OLD.type = 'income'   THEN COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                           WHEN OLD.type = 'expense'  THEN -COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                           WHEN OLD.type = 'transfer' THEN -COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                           ELSE 0
+                         END) / 100.0,
+         updated_at    = datetime('now')
   WHERE  id = OLD.account_id
     AND  id != 'direct-goal'
     AND  (
@@ -262,8 +343,9 @@ BEGIN
 
   -- Si era transferencia, descuenta de la cuenta destino
   UPDATE accounts
-  SET    balance    = balance - OLD.amount,
-         updated_at = datetime('now')
+  SET    balance_cents = COALESCE(balance_cents, CAST(ROUND(balance * 100) AS INTEGER)) - COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER)),
+         balance       = (COALESCE(balance_cents, CAST(ROUND(balance * 100) AS INTEGER)) - COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))) / 100.0,
+         updated_at    = datetime('now')
   WHERE  id = OLD.to_account_id
     AND  OLD.to_account_id IS NOT NULL
     AND  OLD.type = 'transfer'
@@ -277,22 +359,28 @@ BEGIN
 
   -- Si estaba vinculada a una meta, revierte el impacto en la meta
   UPDATE savings_goals
-  SET    current_amount = MAX(0, current_amount - CASE
-                                                    WHEN OLD.type IN ('expense', 'transfer') THEN OLD.amount
-                                                    WHEN OLD.type = 'income' AND OLD.category_id != 'cat-savings' THEN OLD.amount
-                                                    WHEN OLD.type = 'income' AND OLD.category_id = 'cat-savings' THEN -OLD.amount
-                                                    ELSE 0
-                                                  END),
-         status         = CASE
-                            WHEN (current_amount - CASE
-                                                    WHEN OLD.type IN ('expense', 'transfer') THEN OLD.amount
-                                                    WHEN OLD.type = 'income' AND OLD.category_id != 'cat-savings' THEN OLD.amount
-                                                    WHEN OLD.type = 'income' AND OLD.category_id = 'cat-savings' THEN -OLD.amount
-                                                    ELSE 0
-                                                  END) >= target_amount THEN 'completed'
-                            ELSE 'active'
-                          END,
-         updated_at     = datetime('now')
+  SET    current_amount_cents = MAX(0, COALESCE(current_amount_cents, CAST(ROUND(current_amount * 100) AS INTEGER)) - CASE
+                                  WHEN OLD.type IN ('expense', 'transfer') THEN COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                                  WHEN OLD.type = 'income' AND OLD.category_id != 'cat-savings' THEN COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                                  WHEN OLD.type = 'income' AND OLD.category_id = 'cat-savings' THEN -COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                                  ELSE 0
+                                END),
+         current_amount       = MAX(0, COALESCE(current_amount_cents, CAST(ROUND(current_amount * 100) AS INTEGER)) - CASE
+                                  WHEN OLD.type IN ('expense', 'transfer') THEN COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                                  WHEN OLD.type = 'income' AND OLD.category_id != 'cat-savings' THEN COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                                  WHEN OLD.type = 'income' AND OLD.category_id = 'cat-savings' THEN -COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                                  ELSE 0
+                                END) / 100.0,
+         status               = CASE
+                                  WHEN (COALESCE(current_amount_cents, CAST(ROUND(current_amount * 100) AS INTEGER)) - CASE
+                                    WHEN OLD.type IN ('expense', 'transfer') THEN COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                                    WHEN OLD.type = 'income' AND OLD.category_id != 'cat-savings' THEN COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                                    WHEN OLD.type = 'income' AND OLD.category_id = 'cat-savings' THEN -COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                                    ELSE 0
+                                  END) >= COALESCE(target_amount_cents, CAST(ROUND(target_amount * 100) AS INTEGER)) THEN 'completed'
+                                  ELSE 'active'
+                                END,
+         updated_at           = datetime('now')
   WHERE  id = OLD.goal_id
     AND  OLD.goal_id IS NOT NULL
     AND  (
@@ -311,13 +399,19 @@ AFTER UPDATE ON transactions
 BEGIN
   -- Revertir valores antiguos (OLD)
   UPDATE accounts
-  SET    balance    = balance - CASE
-                                  WHEN OLD.type = 'income'   THEN OLD.amount
-                                  WHEN OLD.type = 'expense'  THEN -OLD.amount
-                                  WHEN OLD.type = 'transfer' THEN -OLD.amount
-                                  ELSE 0
-                                END,
-         updated_at = datetime('now')
+  SET    balance_cents = COALESCE(balance_cents, CAST(ROUND(balance * 100) AS INTEGER)) - CASE
+                           WHEN OLD.type = 'income'   THEN COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                           WHEN OLD.type = 'expense'  THEN -COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                           WHEN OLD.type = 'transfer' THEN -COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                           ELSE 0
+                         END,
+         balance       = (COALESCE(balance_cents, CAST(ROUND(balance * 100) AS INTEGER)) - CASE
+                           WHEN OLD.type = 'income'   THEN COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                           WHEN OLD.type = 'expense'  THEN -COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                           WHEN OLD.type = 'transfer' THEN -COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                           ELSE 0
+                         END) / 100.0,
+         updated_at    = datetime('now')
   WHERE  id = OLD.account_id
     AND  id != 'direct-goal'
     AND  (
@@ -329,8 +423,9 @@ BEGIN
     );
 
   UPDATE accounts
-  SET    balance    = balance - OLD.amount,
-         updated_at = datetime('now')
+  SET    balance_cents = COALESCE(balance_cents, CAST(ROUND(balance * 100) AS INTEGER)) - COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER)),
+         balance       = (COALESCE(balance_cents, CAST(ROUND(balance * 100) AS INTEGER)) - COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))) / 100.0,
+         updated_at    = datetime('now')
   WHERE  id = OLD.to_account_id
     AND  OLD.to_account_id IS NOT NULL
     AND  OLD.type = 'transfer'
@@ -343,13 +438,19 @@ BEGIN
     );
 
   UPDATE savings_goals
-  SET    current_amount = MAX(0, current_amount - CASE
-                                                    WHEN OLD.type IN ('expense', 'transfer') THEN OLD.amount
-                                                    WHEN OLD.type = 'income' AND OLD.category_id != 'cat-savings' THEN OLD.amount
-                                                    WHEN OLD.type = 'income' AND OLD.category_id = 'cat-savings' THEN -OLD.amount
-                                                    ELSE 0
-                                                  END),
-         updated_at     = datetime('now')
+  SET    current_amount_cents = MAX(0, COALESCE(current_amount_cents, CAST(ROUND(current_amount * 100) AS INTEGER)) - CASE
+                                  WHEN OLD.type IN ('expense', 'transfer') THEN COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                                  WHEN OLD.type = 'income' AND OLD.category_id != 'cat-savings' THEN COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                                  WHEN OLD.type = 'income' AND OLD.category_id = 'cat-savings' THEN -COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                                  ELSE 0
+                                END),
+         current_amount       = MAX(0, COALESCE(current_amount_cents, CAST(ROUND(current_amount * 100) AS INTEGER)) - CASE
+                                  WHEN OLD.type IN ('expense', 'transfer') THEN COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                                  WHEN OLD.type = 'income' AND OLD.category_id != 'cat-savings' THEN COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                                  WHEN OLD.type = 'income' AND OLD.category_id = 'cat-savings' THEN -COALESCE(OLD.amount_cents, CAST(ROUND(OLD.amount * 100) AS INTEGER))
+                                  ELSE 0
+                                END) / 100.0,
+         updated_at           = datetime('now')
   WHERE  id = OLD.goal_id
     AND  OLD.goal_id IS NOT NULL
     AND  (
@@ -362,13 +463,19 @@ BEGIN
 
   -- Aplicar nuevos valores (NEW)
   UPDATE accounts
-  SET    balance    = balance + CASE
-                                  WHEN NEW.type = 'income'   THEN NEW.amount
-                                  WHEN NEW.type = 'expense'  THEN -NEW.amount
-                                  WHEN NEW.type = 'transfer' THEN -NEW.amount
-                                  ELSE 0
-                                END,
-         updated_at = datetime('now')
+  SET    balance_cents = COALESCE(balance_cents, CAST(ROUND(balance * 100) AS INTEGER)) + CASE
+                           WHEN NEW.type = 'income'   THEN COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                           WHEN NEW.type = 'expense'  THEN -COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                           WHEN NEW.type = 'transfer' THEN -COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                           ELSE 0
+                         END,
+         balance       = (COALESCE(balance_cents, CAST(ROUND(balance * 100) AS INTEGER)) + CASE
+                           WHEN NEW.type = 'income'   THEN COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                           WHEN NEW.type = 'expense'  THEN -COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                           WHEN NEW.type = 'transfer' THEN -COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                           ELSE 0
+                         END) / 100.0,
+         updated_at    = datetime('now')
   WHERE  id = NEW.account_id
     AND  id != 'direct-goal'
     AND  (
@@ -380,8 +487,9 @@ BEGIN
     );
 
   UPDATE accounts
-  SET    balance    = balance + NEW.amount,
-         updated_at = datetime('now')
+  SET    balance_cents = COALESCE(balance_cents, CAST(ROUND(balance * 100) AS INTEGER)) + COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER)),
+         balance       = (COALESCE(balance_cents, CAST(ROUND(balance * 100) AS INTEGER)) + COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))) / 100.0,
+         updated_at    = datetime('now')
   WHERE  id = NEW.to_account_id
     AND  NEW.to_account_id IS NOT NULL
     AND  NEW.type = 'transfer'
@@ -394,22 +502,28 @@ BEGIN
     );
 
   UPDATE savings_goals
-  SET    current_amount = MAX(0, current_amount + CASE
-                                                    WHEN NEW.type IN ('expense', 'transfer') THEN NEW.amount
-                                                    WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN NEW.amount
-                                                    WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -NEW.amount
-                                                    ELSE 0
-                                                  END),
-         status         = CASE
-                            WHEN (current_amount + CASE
-                                                    WHEN NEW.type IN ('expense', 'transfer') THEN NEW.amount
-                                                    WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN NEW.amount
-                                                    WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -NEW.amount
-                                                    ELSE 0
-                                                  END) >= target_amount THEN 'completed'
-                            ELSE 'active'
-                          END,
-         updated_at     = datetime('now')
+  SET    current_amount_cents = MAX(0, COALESCE(current_amount_cents, CAST(ROUND(current_amount * 100) AS INTEGER)) + CASE
+                                  WHEN NEW.type IN ('expense', 'transfer') THEN COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                  WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                  WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                  ELSE 0
+                                END),
+         current_amount       = MAX(0, COALESCE(current_amount_cents, CAST(ROUND(current_amount * 100) AS INTEGER)) + CASE
+                                  WHEN NEW.type IN ('expense', 'transfer') THEN COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                  WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                  WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                  ELSE 0
+                                END) / 100.0,
+         status               = CASE
+                                  WHEN (COALESCE(current_amount_cents, CAST(ROUND(current_amount * 100) AS INTEGER)) + CASE
+                                    WHEN NEW.type IN ('expense', 'transfer') THEN COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                    WHEN NEW.type = 'income' AND NEW.category_id != 'cat-savings' THEN COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                    WHEN NEW.type = 'income' AND NEW.category_id = 'cat-savings' THEN -COALESCE(NEW.amount_cents, CAST(ROUND(NEW.amount * 100) AS INTEGER))
+                                    ELSE 0
+                                  END) >= COALESCE(target_amount_cents, CAST(ROUND(target_amount * 100) AS INTEGER)) THEN 'completed'
+                                  ELSE 'active'
+                                END,
+         updated_at           = datetime('now')
   WHERE  id = NEW.goal_id
     AND  NEW.goal_id IS NOT NULL
     AND  (

@@ -24,6 +24,9 @@ import { handleReports } from "./routes/reports";
 import { handleUserSettings } from "./routes/user-settings";
 import { handleRecurring } from "./routes/recurring";
 import { handleSystemStats } from "./routes/system-stats";
+import { handleInstallments } from "./routes/installments";
+import { handleStatements } from "./routes/statements";
+import { handleBudgets } from "./routes/budgets";
 
 export type { Env };
 
@@ -136,6 +139,18 @@ export default {
 
       if (path === "/stats") {
         return await handleSystemStats(request, env, url, authUser);
+      }
+
+      if (path === "/installments" || path.startsWith("/installments/")) {
+        return await handleInstallments(request, env, url, authUser);
+      }
+
+      if (path === "/statements" || path.startsWith("/statements/")) {
+        return await handleStatements(request, env, url, authUser);
+      }
+
+      if (path === "/budgets" || path.startsWith("/budgets/")) {
+        return await handleBudgets(request, env, url, authUser);
       }
 
       return error("Ruta no encontrada", 404);
