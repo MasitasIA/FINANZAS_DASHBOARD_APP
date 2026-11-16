@@ -13,15 +13,20 @@ Aplicación móvil multi-usuario de finanzas personales desarrollada con **React
 ## ✨ Características Principales
 
 - **Dashboard Resumen**:
+  - **Perfil de Usuario**: modal interactivo accesible tocando el avatar/nombre en la cabecera, mostrando fecha de registro del usuario, último acceso, cuentas totales, movimientos acumulados, metas activas, presupuestos configurados y cierre de sesión seguro con diálogo de confirmación.
   - Visualiza tu **Patrimonio Neto Total** y **Dinero Disponible** (incorporando ahorros en metas y descontando automáticamente saldos negativos en cuentas o deudas de tarjetas de crédito).
   - **Distribución de Fondos en 3 Vías**: visualización clara y vertical de dinero *Disponible* (libre de deudas), *Reservado* (en metas de ahorro activas) y *Comprometido* (gastos automáticos pendientes del mes y deuda de tarjetas).
   - **Presupuestos Mensuales por Categoría**: establece límites de gasto mensual por rubro con barras de progreso dinámicas (`<80%`: verde, `80-99%`: amarillo, `>=100%`: rojo) y alertas locales automáticas al 80% y 100%.
   - Vista rápida de **Cuentas**, **Metas activas**, **Gastos e Ingresos Automáticos**, y panel de **Información del Sistema y Copias de Seguridad**.
 - **📅 Pestaña Calendario de Vencimientos (`/(tabs)/calendar`)**:
+  - **Sensible al Año y Mes seleccionado**: muestra exclusivamente los gastos e ingresos recurrentes que caen en ese período (filtrando por fecha de inicio y frecuencia anual, mensual o semanal), junto con cierres de tarjeta, vencimientos y cuotas activas del mes.
+  - **Selector Rápido de Período**: navegación ágil con flechas de mes (`<` / `>`) y año (`<<` / `>>`), junto con modal interactivo con cuadrícula de 12 meses y selector rápido de años.
   - Vista dual: **Agenda (Línea de tiempo)** agrupada por día y **Cuadrícula mensual interactiva** con puntos indicadores por tipo de evento (verde para ingresos, rojo para gastos/cuotas, ámbar para cierres y vencimientos de tarjeta).
   - Resumen consolidado del mes con importes de ancho completo: *Ingresos previstos*, *Gastos y tarjetas* y *Balance neto estimado*.
   - Filtros rápidos en cabecera: *Todos*, *Gastos*, *Ingresos*, *Tarjetas y cuotas*.
-- **💳 Tarjetas de Crédito, Cuotas y Resúmenes (`/accounts/[id]`)**:
+- **💳 Cuentas, Tarjetas de Crédito, Cuotas y Resúmenes (`/accounts/[id]`)**:
+  - **Ajustar saldo**: herramienta para ajustar el saldo registrado de cualquier cuenta con cálculo de diferencia en vivo (`+` / `-`), motivo opcional, diálogo de confirmación y creación automática del movimiento de ajuste para mantener la integridad contable.
+  - **Modales de confirmación de diseño (`ConfirmModal`)**: reemplazo de las alertas nativas y de navegador por un componente modal unificado y estilizado acorde al design system tanto en iOS, Android y Web.
   - **Compras en cuotas con cálculo financiero**: simulador y registro de compras en cuotas con cálculo automático de recargo financiero e interés implícito respecto al precio de contado.
   - **Límite de crédito bancario disponible**: cálculo riguroso del cupo disponible (`Límite - Deuda actual - Cuotas futuras por vencer`).
   - **Gestión de Resúmenes de Cuenta**: generación y cierre de resúmenes de facturación mensuales, con opción de abonar saldo total o pagos parciales con actualización automática de cuentas de origen y deuda.

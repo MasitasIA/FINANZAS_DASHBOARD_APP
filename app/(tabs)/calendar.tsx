@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Modal,
   Pressable,
   ScrollView,
   View,
@@ -8,12 +9,13 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Card, Typography } from "@/components/ui";
+import { Button, Card, Typography } from "@/components/ui";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useRecurringExpenses } from "@/hooks/useRecurringExpenses";
 import { useInstallments } from "@/hooks/useInstallments";
+import { useStatements } from "@/hooks/useStatements";
 import { useAppTheme } from "@/theme/useAppTheme";
-import { formatCurrency } from "@/utils/formatters";
+import { formatCurrency, parseSafeDate } from "@/utils/formatters";
 import type { Currency } from "@/types";
 
 type FilterType = "all" | "expenses" | "incomes" | "cards";
@@ -31,6 +33,7 @@ interface CalendarEvent {
   color?: string;
   icon?: string;
   accountId?: string;
+  isPaid?: boolean;
 }
 
 const MONTH_NAMES = [
@@ -48,23 +51,57 @@ const MONTH_NAMES = [
   "Diciembre",
 ];
 
+const MONTH_SHORT = [
+  "Ene",
+  "Feb",
+  "Mar",
+  "Abr",
+  "May",
+  "Jun",
+  "Jul",
+  "Ago",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dic",
+];
+
 const WEEKDAY_NAMES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
 export default function CalendarScreen() {
   const { colors } = useAppTheme();
 
-  // Fecha seleccionada (año y mes)
-  const now = new Date();
-  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(now.getMonth()); // 0-indexed
+  // Fecha de referencia (hoy)
+  const now = useMemo(() => new Date(), []);
+  const todayYear = now.getFullYear();
+  const todayMonth = now.getMonth();
+  const todayDate = now.getDate();
+
+  // Fecha seleccionada en el calendario
+  const [selectedYear, setSelectedYear] = useState(todayYear);
+  const [selectedMonth, setSelectedMonth] = useState(todayMonth); // 0-indexed
   const [selectedFilter, setSelectedFilter] = useState<FilterType>("all");
   const [viewMode, setViewMode] = useState<ViewMode>("agenda");
-  const [selectedGridDay, setSelectedGridDay] = useState<number | null>(now.getDate());
+  const [selectedGridDay, setSelectedGridDay] = useState<number | null>(
+    todayDate,
+  );
+
+  // Modal para seleccionar Año y Mes
+  const [showYearMonthModal, setShowYearMonthModal] = useState(false);
+  const [modalYear, setModalYear] = useState(todayYear);
+
+  // Días en el mes seleccionado
+  const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
+  const firstDayWeekday = new Date(selectedYear, selectedMonth, 1).getDay();
+  const monthPadded = String(selectedMonth + 1).padStart(2, "0");
 
   // Carga de datos
   const { data: accountsData, isLoading: loadingAccounts } = useAccounts();
-  const { data: recurringData, isLoading: loadingRecurring } = useRecurringExpenses();
-  const { data: installmentsData, isLoading: loadingInstallments } = useInstallments();
+  const { data: recurringData, isLoading: loadingRecurring } =
+    useRecurringExpenses();
+  const { data: installmentsData, isLoading: loadingInstallments } =
+    useInstallments();
+  const { data: statementsData } = useStatements();
 
   const accounts = useMemo(() => accountsData?.data ?? [], [accountsData]);
   const recurring = useMemo(() => recurringData?.data ?? [], [recurringData]);
@@ -72,11 +109,15 @@ export default function CalendarScreen() {
     () => installmentsData?.data ?? [],
     [installmentsData],
   );
+  const statements = useMemo(
+    () => statementsData?.data ?? [],
+    [statementsData],
+  );
 
   const isCurrentMonth =
-    selectedYear === now.getFullYear() && selectedMonth === now.getMonth();
+    selectedYear === todayYear && selectedMonth === todayMonth;
 
-  // Navegación de mes
+  // Navegación de mes y año
   const handlePrevMonth = () => {
     if (selectedMonth === 0) {
       setSelectedMonth(11);
@@ -97,59 +138,155 @@ export default function CalendarScreen() {
     setSelectedGridDay(null);
   };
 
-  const handleGoToday = () => {
-    setSelectedYear(now.getFullYear());
-    setSelectedMonth(now.getMonth());
-    setSelectedGridDay(now.getDate());
+  const handlePrevYear = () => {
+    setSelectedYear((y) => y - 1);
+    setSelectedGridDay(null);
   };
 
-  // Días en el mes
-  const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
-  const firstDayWeekday = new Date(selectedYear, selectedMonth, 1).getDay();
+  const handleNextYear = () => {
+    setSelectedYear((y) => y + 1);
+    setSelectedGridDay(null);
+  };
 
-  // Construcción de eventos del mes seleccionado
+  const handleGoToday = () => {
+    setSelectedYear(todayYear);
+    setSelectedMonth(todayMonth);
+    setSelectedGridDay(todayDate);
+  };
+
+  const handleOpenYearMonthPicker = () => {
+    setModalYear(selectedYear);
+    setShowYearMonthModal(true);
+  };
+
+  const handleSelectYearMonth = (year: number, month: number) => {
+    setSelectedYear(year);
+    setSelectedMonth(month);
+    setSelectedGridDay(null);
+    setShowYearMonthModal(false);
+  };
+
+  // ── Construcción de eventos: Solo gastos/ingresos recurrentes, tarjetas y cuotas en su fecha ──
   const events = useMemo<CalendarEvent[]>(() => {
     const list: CalendarEvent[] = [];
-    const monthPadded = String(selectedMonth + 1).padStart(2, "0");
 
-    // 1. Recurrentes (Gastos e Ingresos fijos/variables)
+    // 1. Gastos e Ingresos Recurrentes (solo si corresponde a este Año y Mes)
     recurring
       .filter((r) => r.isActive)
       .forEach((r) => {
+        const isInc = r.type === "income";
+
+        // Si la frecuencia es ANUAL: solo aparece en el mes exacto de su fecha de vencimiento
+        if (r.frequency === "yearly") {
+          const dueMonth = parseSafeDate(r.dueDate).getMonth();
+          if (selectedMonth !== dueMonth) {
+            return;
+          }
+        }
+
+        // Si ya fue abonado este mes en el año correspondiente
+        const isPaidThisMonth = Boolean(
+          r.lastPaidDate &&
+          r.lastPaidDate.startsWith(`${selectedYear}-${monthPadded}`),
+        );
+
+        let statusSubtitle = isInc ? "Ingreso recurrente" : "Gasto recurrente";
+        if (isPaidThisMonth) {
+          statusSubtitle = isInc ? "✓ Cobrado este mes" : "✓ Pagado este mes";
+        } else if (isCurrentMonth) {
+          const dueDayNum = Math.min(r.dueDay || 1, daysInMonth);
+          if (dueDayNum < todayDate) {
+            statusSubtitle = isInc ? "Ingreso del mes" : "Gasto del mes";
+          } else {
+            statusSubtitle = "Próximo vencimiento";
+          }
+        }
+
+        // Frecuencia semanal: genera eventos en los días del mes que coincidan con el día de la semana
+        if (r.frequency === "weekly") {
+          const startDate = parseSafeDate(r.dueDate || r.createdAt);
+          const targetWeekday = startDate.getDay();
+          for (let d = 1; d <= daysInMonth; d++) {
+            const dateCheck = new Date(selectedYear, selectedMonth, d);
+            if (dateCheck.getDay() === targetWeekday) {
+              const dayPadded = String(d).padStart(2, "0");
+              list.push({
+                id: `rec-${r.id}-day-${d}`,
+                day: d,
+                dateStr: `${selectedYear}-${monthPadded}-${dayPadded}`,
+                title: r.name,
+                subtitle: `${statusSubtitle} (Semanal)`,
+                amount: r.amount,
+                currency: r.currency || "ARS",
+                type: isInc ? "income" : "expense",
+                color: isPaidThisMonth
+                  ? "#68615e"
+                  : r.color || (isInc ? "#17b26a" : "#f04438"),
+                icon: isPaidThisMonth
+                  ? "check-circle-outline"
+                  : r.icon || (isInc ? "cash-plus" : "calendar-sync"),
+                accountId: r.accountId,
+                isPaid: isPaidThisMonth,
+              });
+            }
+          }
+          return;
+        }
+
+        // Frecuencia mensual o anual en el día indicado
         const day = Math.min(r.dueDay || 1, daysInMonth);
         const dayPadded = String(day).padStart(2, "0");
         const dateStr = `${selectedYear}-${monthPadded}-${dayPadded}`;
-        const isInc = r.type === "income";
 
         list.push({
           id: `rec-${r.id}`,
           day,
           dateStr,
           title: r.name,
-          subtitle: isInc ? "Ingreso recurrente" : "Gasto recurrente",
+          subtitle: statusSubtitle,
           amount: r.amount,
           currency: r.currency || "ARS",
           type: isInc ? "income" : "expense",
-          color: r.color || (isInc ? "#17b26a" : "#f04438"),
-          icon: r.icon || (isInc ? "cash-plus" : "calendar-sync"),
+          color: isPaidThisMonth
+            ? "#68615e"
+            : r.color || (isInc ? "#17b26a" : "#f04438"),
+          icon: isPaidThisMonth
+            ? "check-circle-outline"
+            : r.icon || (isInc ? "cash-plus" : "calendar-sync"),
           accountId: r.accountId,
+          isPaid: isPaidThisMonth,
         });
       });
 
-    // 2. Tarjetas de crédito (Cierre y Vencimiento)
+    // 2. Tarjetas de crédito (Cierre, Vencimiento y Resúmenes del Mes)
     const creditAccounts = accounts.filter((a) => a.type === "credit");
     creditAccounts.forEach((acc) => {
-      // Cierre
+      // Buscar si existe un resumen para esta tarjeta en este año y mes
+      const matchingStmt = statements.find((s) => {
+        if (s.accountId !== acc.id) return false;
+        const cDate = parseSafeDate(s.closingDate);
+        const dDate = parseSafeDate(s.dueDate);
+        return (
+          (cDate.getFullYear() === selectedYear &&
+            cDate.getMonth() === selectedMonth) ||
+          (dDate.getFullYear() === selectedYear &&
+            dDate.getMonth() === selectedMonth)
+        );
+      });
+
+      // Cierre de tarjeta
       if (acc.closingDay) {
         const day = Math.min(acc.closingDay, daysInMonth);
         const dayPadded = String(day).padStart(2, "0");
         const dateStr = `${selectedYear}-${monthPadded}-${dayPadded}`;
         list.push({
-          id: `card-close-${acc.id}`,
+          id: `card-close-${acc.id}-${selectedYear}-${selectedMonth}`,
           day,
           dateStr,
           title: `Cierre: ${acc.name}`,
-          subtitle: "Cierre de facturación del período",
+          subtitle: matchingStmt
+            ? `Cierre período (${matchingStmt.status})`
+            : "Cierre de facturación mensual",
           type: "card_closing",
           color: "#f79009",
           icon: "calendar-lock",
@@ -157,20 +294,35 @@ export default function CalendarScreen() {
         });
       }
 
-      // Vencimiento de pago
+      // Vencimiento de tarjeta
       if (acc.dueDay) {
         const day = Math.min(acc.dueDay, daysInMonth);
         const dayPadded = String(day).padStart(2, "0");
         const dateStr = `${selectedYear}-${monthPadded}-${dayPadded}`;
-        const pendingDebt = Math.abs(acc.balance || 0);
+
+        let dueAmount = matchingStmt?.totalDue;
+        let subtitle = "Vencimiento para abonar resumen";
+
+        if (matchingStmt) {
+          if (matchingStmt.status === "paid_full") {
+            subtitle = "✓ Resumen abonado en su totalidad";
+          } else if (matchingStmt.status === "paid_partial") {
+            subtitle = `Pago parcial realizado (${formatCurrency(matchingStmt.paidAmount, acc.currency)})`;
+          }
+        } else if (isCurrentMonth) {
+          const currentDebt = Math.abs(acc.balance || 0);
+          dueAmount = currentDebt > 0 ? currentDebt : undefined;
+          subtitle =
+            currentDebt > 0 ? "Saldo pendiente actual" : "Sin deuda pendiente";
+        }
 
         list.push({
-          id: `card-due-${acc.id}`,
+          id: `card-due-${acc.id}-${selectedYear}-${selectedMonth}`,
           day,
           dateStr,
           title: `Vencimiento: ${acc.name}`,
-          subtitle: pendingDebt > 0 ? "Vencimiento para abonar resumen" : "Sin deuda pendiente",
-          amount: pendingDebt > 0 ? pendingDebt : undefined,
+          subtitle,
+          amount: dueAmount,
           currency: acc.currency,
           type: "card_due",
           color: colors.primary[600],
@@ -180,7 +332,7 @@ export default function CalendarScreen() {
       }
     });
 
-    // 3. Cuotas activas en este mes
+    // 3. Cuotas de tarjeta activas en este año y mes exactos
     installments
       .filter((plan) => plan.status === "active")
       .forEach((plan) => {
@@ -189,14 +341,14 @@ export default function CalendarScreen() {
         const dayPadded = String(dueDay).padStart(2, "0");
         const dateStr = `${selectedYear}-${monthPadded}-${dayPadded}`;
 
-        // Determinar qué cuota cae en este mes
-        const start = new Date(plan.firstDueDate);
-        const currentSelectedDate = new Date(selectedYear, selectedMonth, 1);
+        // Cálculo exacto del número de cuota para el mes y año seleccionados
+        const start = parseSafeDate(plan.firstDueDate);
         const monthsDiff =
-          (currentSelectedDate.getFullYear() - start.getFullYear()) * 12 +
-          (currentSelectedDate.getMonth() - start.getMonth());
+          (selectedYear - start.getFullYear()) * 12 +
+          (selectedMonth - start.getMonth());
 
         const currentInstallmentNum = monthsDiff + 1;
+        // Solo incluir si la cuota cae dentro del rango del plan [1, count]
         if (
           currentInstallmentNum >= 1 &&
           currentInstallmentNum <= plan.installmentsCount
@@ -223,13 +375,17 @@ export default function CalendarScreen() {
     recurring,
     accounts,
     installments,
+    statements,
     selectedYear,
     selectedMonth,
     daysInMonth,
+    monthPadded,
+    isCurrentMonth,
+    todayDate,
     colors.primary,
   ]);
 
-  // Filtrado de eventos
+  // Filtrado de eventos por categoría rápida
   const filteredEvents = useMemo(() => {
     return events.filter((e) => {
       if (selectedFilter === "expenses") {
@@ -249,7 +405,7 @@ export default function CalendarScreen() {
     });
   }, [events, selectedFilter]);
 
-  // Totales previstos del mes (filtrados por moneda principal ARS o de las cuentas)
+  // Totales consolidados del mes
   const totals = useMemo(() => {
     let income = 0;
     let expense = 0;
@@ -258,7 +414,11 @@ export default function CalendarScreen() {
       if (e.amount && e.amount > 0) {
         if (e.type === "income") {
           income += e.amount;
-        } else if (e.type === "expense" || e.type === "installment" || e.type === "card_due") {
+        } else if (
+          e.type === "expense" ||
+          e.type === "installment" ||
+          e.type === "card_due"
+        ) {
           expense += e.amount;
         }
       }
@@ -292,7 +452,7 @@ export default function CalendarScreen() {
         contentContainerClassName="px-4 pb-12 pt-2 gap-4"
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Encabezado: Título y Navegación de Mes ─────────────── */}
+        {/* ── Encabezado: Título y Navegación de Mes/Año ─────────────── */}
         <View className="gap-3">
           <View className="flex-row items-center justify-between">
             <Typography variant="h1">Calendario</Typography>
@@ -306,7 +466,9 @@ export default function CalendarScreen() {
                 <MaterialCommunityIcons
                   name="view-agenda-outline"
                   size={15}
-                  color={viewMode === "agenda" ? colors.white : colors.text.secondary}
+                  color={
+                    viewMode === "agenda" ? colors.white : colors.text.secondary
+                  }
                 />
                 <Typography
                   className={`text-xs font-semibold ${
@@ -325,7 +487,9 @@ export default function CalendarScreen() {
                 <MaterialCommunityIcons
                   name="calendar-month-outline"
                   size={15}
-                  color={viewMode === "grid" ? colors.white : colors.text.secondary}
+                  color={
+                    viewMode === "grid" ? colors.white : colors.text.secondary
+                  }
                 />
                 <Typography
                   className={`text-xs font-semibold ${
@@ -338,25 +502,50 @@ export default function CalendarScreen() {
             </View>
           </View>
 
-          {/* Selector de Mes con Flechas */}
+          {/* Selector de Mes y Año Interactivo */}
           <Card className="flex-row items-center justify-between p-2.5">
-            <Pressable
-              onPress={handlePrevMonth}
-              className="w-9 h-9 rounded-xl bg-surface-700 items-center justify-center active:bg-surface-600"
-            >
-              <MaterialCommunityIcons
-                name="chevron-left"
-                size={22}
-                color={colors.text.primary}
-              />
-            </Pressable>
+            <View className="flex-row items-center gap-1">
+              <Pressable
+                onPress={handlePrevYear}
+                accessibilityLabel="Año anterior"
+                className="w-8 h-8 rounded-xl bg-surface-700 items-center justify-center active:bg-surface-600"
+              >
+                <MaterialCommunityIcons
+                  name="chevron-double-left"
+                  size={18}
+                  color={colors.text.secondary}
+                />
+              </Pressable>
+              <Pressable
+                onPress={handlePrevMonth}
+                accessibilityLabel="Mes anterior"
+                className="w-9 h-9 rounded-xl bg-surface-700 items-center justify-center active:bg-surface-600"
+              >
+                <MaterialCommunityIcons
+                  name="chevron-left"
+                  size={22}
+                  color={colors.text.primary}
+                />
+              </Pressable>
+            </View>
 
-            <View className="items-center">
-              <Typography variant="h3">
-                {MONTH_NAMES[selectedMonth]} {selectedYear}
-              </Typography>
-              {!isCurrentMonth && (
-                <Pressable onPress={handleGoToday}>
+            {/* Título de Mes y Año: Al presionar abre selector rápido */}
+            <Pressable
+              onPress={handleOpenYearMonthPicker}
+              className="items-center px-3 py-1 rounded-xl active:bg-surface-700/60"
+            >
+              <View className="flex-row items-center gap-1.5">
+                <Typography variant="h3">
+                  {MONTH_NAMES[selectedMonth]} {selectedYear}
+                </Typography>
+                <MaterialCommunityIcons
+                  name="calendar-search"
+                  size={16}
+                  color={colors.primary[500]}
+                />
+              </View>
+              {!isCurrentMonth ? (
+                <Pressable onPress={handleGoToday} className="mt-0.5">
                   <Typography
                     variant="caption"
                     className="text-primary-600 font-semibold text-[11px]"
@@ -364,19 +553,37 @@ export default function CalendarScreen() {
                     Volver a hoy
                   </Typography>
                 </Pressable>
+              ) : (
+                <Typography variant="caption" muted className="text-[10px]">
+                  Cambiar la fecha
+                </Typography>
               )}
-            </View>
-
-            <Pressable
-              onPress={handleNextMonth}
-              className="w-9 h-9 rounded-xl bg-surface-700 items-center justify-center active:bg-surface-600"
-            >
-              <MaterialCommunityIcons
-                name="chevron-right"
-                size={22}
-                color={colors.text.primary}
-              />
             </Pressable>
+
+            <View className="flex-row items-center gap-1">
+              <Pressable
+                onPress={handleNextMonth}
+                accessibilityLabel="Mes siguiente"
+                className="w-9 h-9 rounded-xl bg-surface-700 items-center justify-center active:bg-surface-600"
+              >
+                <MaterialCommunityIcons
+                  name="chevron-right"
+                  size={22}
+                  color={colors.text.primary}
+                />
+              </Pressable>
+              <Pressable
+                onPress={handleNextYear}
+                accessibilityLabel="Año siguiente"
+                className="w-8 h-8 rounded-xl bg-surface-700 items-center justify-center active:bg-surface-600"
+              >
+                <MaterialCommunityIcons
+                  name="chevron-double-right"
+                  size={18}
+                  color={colors.text.secondary}
+                />
+              </Pressable>
+            </View>
           </Card>
         </View>
 
@@ -396,7 +603,11 @@ export default function CalendarScreen() {
                 <Typography className="text-sm font-semibold text-success-500">
                   Ingresos previstos
                 </Typography>
-                <Typography variant="caption" muted className="text-[11px] mt-0.5">
+                <Typography
+                  variant="caption"
+                  muted
+                  className="text-[11px] mt-0.5"
+                >
                   Fijos y recurrentes del mes
                 </Typography>
               </View>
@@ -424,7 +635,11 @@ export default function CalendarScreen() {
                 <Typography className="text-sm font-semibold text-danger-500">
                   Gastos y tarjetas
                 </Typography>
-                <Typography variant="caption" muted className="text-[11px] mt-0.5">
+                <Typography
+                  variant="caption"
+                  muted
+                  className="text-[11px] mt-0.5"
+                >
                   Recurrentes, cuotas y resúmenes
                 </Typography>
               </View>
@@ -452,8 +667,14 @@ export default function CalendarScreen() {
                 <Typography className="text-sm font-semibold text-text-primary">
                   Balance neto previsto
                 </Typography>
-                <Typography variant="caption" muted className="text-[11px] mt-0.5">
-                  {totals.balance >= 0 ? "Superávit estimado" : "Déficit estimado"}
+                <Typography
+                  variant="caption"
+                  muted
+                  className="text-[11px] mt-0.5"
+                >
+                  {totals.balance >= 0
+                    ? "Superávit estimado"
+                    : "Déficit estimado"}
                 </Typography>
               </View>
             </View>
@@ -533,8 +754,7 @@ export default function CalendarScreen() {
               {/* Días del mes */}
               {Array.from({ length: daysInMonth }).map((_, i) => {
                 const day = i + 1;
-                const isToday =
-                  isCurrentMonth && day === now.getDate();
+                const isToday = isCurrentMonth && day === todayDate;
                 const isSelected = selectedGridDay === day;
 
                 const dayEvents = filteredEvents.filter((e) => e.day === day);
@@ -607,7 +827,8 @@ export default function CalendarScreen() {
             {selectedGridDay && (
               <View className="mt-3 pt-3 border-t border-surface-600/50 gap-2">
                 <Typography variant="label" className="text-xs">
-                  Eventos del día {selectedGridDay} de {MONTH_NAMES[selectedMonth]}
+                  Eventos del {selectedGridDay} de {MONTH_NAMES[selectedMonth]}{" "}
+                  {selectedYear}
                 </Typography>
                 {gridSelectedDayEvents.length === 0 ? (
                   <Typography variant="caption" muted className="text-xs py-2">
@@ -629,10 +850,15 @@ export default function CalendarScreen() {
                         <View className="flex-row items-center gap-2.5 flex-1 mr-2">
                           <View
                             className="w-8 h-8 rounded-xl items-center justify-center shrink-0"
-                            style={{ backgroundColor: `${evt.color || colors.primary[500]}20` }}
+                            style={{
+                              backgroundColor: `${evt.color || colors.primary[500]}20`,
+                            }}
                           >
                             <MaterialCommunityIcons
-                              name={(evt.icon as keyof typeof MaterialCommunityIcons.glyphMap) || "calendar"}
+                              name={
+                                (evt.icon as keyof typeof MaterialCommunityIcons.glyphMap) ||
+                                "calendar"
+                              }
                               size={16}
                               color={evt.color || colors.primary[500]}
                             />
@@ -645,7 +871,11 @@ export default function CalendarScreen() {
                               {evt.title}
                             </Typography>
                             {Boolean(evt.subtitle) && (
-                              <Typography variant="caption" muted className="text-[10px]">
+                              <Typography
+                                variant="caption"
+                                muted
+                                className="text-[10px]"
+                              >
                                 {evt.subtitle}
                               </Typography>
                             )}
@@ -654,11 +884,16 @@ export default function CalendarScreen() {
                         {evt.amount !== undefined && (
                           <Typography
                             className={`font-bold text-xs ${
-                              evt.type === "income" ? "text-success-500" : "text-danger-500"
+                              evt.type === "income"
+                                ? "text-success-500"
+                                : "text-danger-500"
                             }`}
                           >
                             {evt.type === "income" ? "+" : "-"}
-                            {formatCurrency(evt.amount, (evt.currency as Currency) || "ARS")}
+                            {formatCurrency(
+                              evt.amount,
+                              (evt.currency as Currency) || "ARS",
+                            )}
                           </Typography>
                         )}
                       </Card>
@@ -687,13 +922,18 @@ export default function CalendarScreen() {
                 <Typography className="font-semibold text-sm text-text-primary text-center">
                   Sin vencimientos en este período
                 </Typography>
-                <Typography variant="caption" muted className="text-center text-xs">
-                  No se registraron gastos fijos, ingresos o cuotas con el filtro seleccionado.
+                <Typography
+                  variant="caption"
+                  muted
+                  className="text-center text-xs"
+                >
+                  No se registraron gastos fijos, ingresos ni cuotas para{" "}
+                  {MONTH_NAMES[selectedMonth]} {selectedYear}.
                 </Typography>
               </Card>
             ) : (
               eventsByDay.map(([day, dayEvents]) => {
-                const isToday = isCurrentMonth && day === now.getDate();
+                const isToday = isCurrentMonth && day === todayDate;
                 const dayDate = new Date(selectedYear, selectedMonth, day);
                 const weekdayName = WEEKDAY_NAMES[dayDate.getDay()];
 
@@ -784,7 +1024,10 @@ export default function CalendarScreen() {
                                 }`}
                               >
                                 {evt.type === "income" ? "+" : "-"}
-                                {formatCurrency(evt.amount, (evt.currency as Currency) || "ARS")}
+                                {formatCurrency(
+                                  evt.amount,
+                                  (evt.currency as Currency) || "ARS",
+                                )}
                               </Typography>
                             ) : (
                               <View className="px-2 py-0.5 rounded-full bg-warning-500/15">
@@ -804,6 +1047,159 @@ export default function CalendarScreen() {
           </View>
         )}
       </ScrollView>
+
+      {/* ── Modal: Selector Rápido de Año y Mes ─────────────── */}
+      <Modal
+        visible={showYearMonthModal}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setShowYearMonthModal(false)}
+      >
+        <Pressable
+          onPress={() => setShowYearMonthModal(false)}
+          className="flex-1 bg-black/60 items-center justify-center p-4"
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            className="w-full max-w-sm bg-surface-800 rounded-3xl p-5 border border-surface-600/70 shadow-2xl gap-4"
+          >
+            {/* Cabecera del selector */}
+            <View className="flex-row items-center justify-between">
+              <Typography variant="h3">Seleccionar período</Typography>
+              <Pressable
+                onPress={() => setShowYearMonthModal(false)}
+                className="w-8 h-8 rounded-full bg-surface-700 items-center justify-center"
+              >
+                <MaterialCommunityIcons
+                  name="close"
+                  size={18}
+                  color={colors.text.secondary}
+                />
+              </Pressable>
+            </View>
+
+            {/* Selector de Año con flechas y chips rápidos */}
+            <View className="gap-2">
+              <Typography variant="label" className="text-xs">
+                Año
+              </Typography>
+              <View className="flex-row items-center justify-between bg-surface-700/60 p-2 rounded-2xl">
+                <Pressable
+                  onPress={() => setModalYear((y) => y - 1)}
+                  className="w-9 h-9 rounded-xl bg-surface-700 items-center justify-center active:bg-surface-600"
+                >
+                  <MaterialCommunityIcons
+                    name="chevron-left"
+                    size={22}
+                    color={colors.text.primary}
+                  />
+                </Pressable>
+                <Typography className="text-lg font-bold text-text-primary">
+                  {modalYear}
+                </Typography>
+                <Pressable
+                  onPress={() => setModalYear((y) => y + 1)}
+                  className="w-9 h-9 rounded-xl bg-surface-700 items-center justify-center active:bg-surface-600"
+                >
+                  <MaterialCommunityIcons
+                    name="chevron-right"
+                    size={22}
+                    color={colors.text.primary}
+                  />
+                </Pressable>
+              </View>
+
+              {/* Chips rápidos de años */}
+              <View className="flex-row items-center justify-between gap-1 pt-1">
+                {[
+                  todayYear - 2,
+                  todayYear - 1,
+                  todayYear,
+                  todayYear + 1,
+                  todayYear + 2,
+                ].map((y) => (
+                  <Pressable
+                    key={y}
+                    onPress={() => setModalYear(y)}
+                    className={`flex-1 py-1.5 rounded-xl items-center ${
+                      modalYear === y ? "bg-primary-600" : "bg-surface-700/80"
+                    }`}
+                  >
+                    <Typography
+                      className={`text-[11px] font-semibold ${
+                        modalYear === y ? "text-white" : "text-text-secondary"
+                      }`}
+                    >
+                      {y}
+                    </Typography>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            {/* Cuadrícula de 12 Meses */}
+            <View className="gap-2">
+              <Typography variant="label" className="text-xs">
+                Mes
+              </Typography>
+              <View className="flex-row flex-wrap gap-2">
+                {MONTH_SHORT.map((mName, mIdx) => {
+                  const isCurrent =
+                    modalYear === selectedYear && mIdx === selectedMonth;
+                  const isActualNow =
+                    modalYear === todayYear && mIdx === todayMonth;
+
+                  return (
+                    <Pressable
+                      key={mName}
+                      onPress={() => handleSelectYearMonth(modalYear, mIdx)}
+                      className={`w-[22.5%] py-2.5 rounded-2xl items-center justify-center border ${
+                        isCurrent
+                          ? "bg-primary-600 border-primary-600"
+                          : isActualNow
+                            ? "bg-primary-600/15 border-primary-600/40"
+                            : "bg-surface-700/60 border-transparent active:bg-surface-600"
+                      }`}
+                    >
+                      <Typography
+                        className={`text-xs font-bold ${
+                          isCurrent
+                            ? "text-white"
+                            : isActualNow
+                              ? "text-primary-600"
+                              : "text-text-primary"
+                        }`}
+                      >
+                        {mName}
+                      </Typography>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* Botón Ir a Hoy y Cerrar */}
+            <View className="flex-row gap-3 pt-2">
+              <Button
+                title="Mes actual (Hoy)"
+                variant="secondary"
+                className="flex-1"
+                onPress={() => {
+                  handleGoToday();
+                  setShowYearMonthModal(false);
+                }}
+              />
+              <Button
+                title="Cerrar"
+                variant="primary"
+                className="flex-1"
+                onPress={() => setShowYearMonthModal(false)}
+              />
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }

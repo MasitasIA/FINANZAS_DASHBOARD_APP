@@ -7,3 +7,4 @@ export { ThemeToggle } from "./ThemeToggle";
 export { ColorPicker } from "./ColorPicker";
 export { IconPicker }  from "./IconPicker";
 export { OfflineBanner } from "./OfflineBanner";
+export { ConfirmModal } from "./ConfirmModal";

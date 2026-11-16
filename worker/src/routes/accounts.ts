@@ -202,6 +202,15 @@ export async function handleAccounts(
       fields.push("icon = ?");
       values.push(sanitizeIcon(body.icon));
     }
+    if (body.balance !== undefined) {
+      const sanitizedBalance =
+        body.balance != null ? sanitizeAmount(body.balance, true, true) : 0;
+      fields.push("balance = ?", "balance_cents = ?");
+      values.push(
+        sanitizedBalance,
+        sanitizedBalance !== null ? Math.round(sanitizedBalance * 100) : 0,
+      );
+    }
     if (body.creditLimit !== undefined) {
       const sanitizedLimit =
         body.creditLimit != null

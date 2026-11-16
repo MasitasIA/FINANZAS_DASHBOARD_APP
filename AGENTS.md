@@ -153,10 +153,12 @@ finanzas_dashboard/
     │   │   ├── PieChart.tsx      ← Interactive SVG donut/pie chart
     │   │   ├── ThemeToggle.tsx   ← Dark-mode switch (variant: row | icon)
     │   │   ├── OfflineBanner.tsx ← Non-intrusive native connectivity status banner
+    │   │   ├── ConfirmModal.tsx  ← Unified cross-platform confirmation modal (replaces alert/confirm)
     │   │   └── index.ts          ← Barrel export
     │   ├── accounts/AccountCard.tsx
     │   ├── goals/GoalCard.tsx
     │   ├── shared/ShareModals.tsx ← JoinWithCodeModal & ShareResourceModal (UNPO-XXXX invites)
+    │   ├── user/UserProfileModal.tsx ← Modal de perfil de usuario con estadísticas de cuenta y fecha de registro
     │   └── recurring/RecurringAutoProcessor.tsx ← Background/foreground processor + variable price prompt modal
     └── utils/
         ├── formatters.ts         ← formatCurrency, formatDate, formatRelativeDate, parseSafeDate

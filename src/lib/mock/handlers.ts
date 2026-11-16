@@ -119,6 +119,10 @@ export const mockAccountHandlers = {
     accounts[idx] = {
       ...accounts[idx],
       ...data,
+      balanceCents:
+        data.balance !== undefined
+          ? Math.round(data.balance * 100)
+          : accounts[idx].balanceCents,
       updatedAt: new Date().toISOString(),
     };
     return ok(accounts[idx]);

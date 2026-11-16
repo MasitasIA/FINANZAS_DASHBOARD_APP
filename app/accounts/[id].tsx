@@ -1,9 +1,7 @@
 import { useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   TextInput,
@@ -16,6 +14,7 @@ import {
   Button,
   Card,
   ColorPicker,
+  ConfirmModal,
   IconPicker,
   Typography,
 } from "@/components/ui";
@@ -28,12 +27,11 @@ import {
 } from "@/hooks/useAccounts";
 import {
   useTransactions,
+  useCreateTransaction,
   useUpdateTransaction,
   useDeleteTransaction,
 } from "@/hooks/useTransactions";
-import {
-  useInstallments,
-} from "@/hooks/useInstallments";
+import { useInstallments } from "@/hooks/useInstallments";
 import {
   useStatements,
   useGenerateStatement,
@@ -44,10 +42,7 @@ import {
   formatDate,
   formatRelativeDate,
 } from "@/utils/formatters";
-import type {
-  Transaction,
-  CreditCardStatement,
-} from "@/types";
+import type { Transaction, CreditCardStatement } from "@/types";
 import { useAppTheme } from "@/theme/useAppTheme";
 
 const ACCOUNT_ICONS: (keyof typeof MaterialCommunityIcons.glyphMap)[] = [
@@ -73,6 +68,7 @@ export default function AccountDetailScreen() {
   const transactions = txData?.data ?? [];
 
   // Mutations
+  const createTxMutation = useCreateTransaction();
   const updateAccountMutation = useUpdateAccount();
   const deleteAccountMutation = useDeleteAccount();
   const updateTxMutation = useUpdateTransaction();
@@ -88,6 +84,29 @@ export default function AccountDetailScreen() {
   const [editCreditLimit, setEditCreditLimit] = useState("");
   const [editClosingDay, setEditClosingDay] = useState("");
   const [editDueDay, setEditDueDay] = useState("");
+
+  // Ajustar Saldo state
+  const [showAdjustModal, setShowAdjustModal] = useState(false);
+  const [adjustTargetInput, setAdjustTargetInput] = useState("");
+  const [adjustNote, setAdjustNote] = useState("");
+
+  // Modal de confirmación unificado
+  const [confirmModalConfig, setConfirmModalConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    cancelText?: string;
+    confirmVariant?: "primary" | "danger" | "warning";
+    icon?: keyof typeof MaterialCommunityIcons.glyphMap;
+    loading?: boolean;
+    onConfirm: () => void;
+  }>({
+    visible: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+  });
 
   // Credit card specific hooks & state
   const [creditTab, setCreditTab] = useState<
@@ -192,9 +211,7 @@ export default function AccountDetailScreen() {
   const totalCommitment = debt + futureInstallmentsDebt;
   const available = Math.max(0, limit - totalCommitment);
   const usagePercent =
-    limit > 0
-      ? Math.min(100, Math.round((totalCommitment / limit) * 100))
-      : 0;
+    limit > 0 ? Math.min(100, Math.round((totalCommitment / limit) * 100)) : 0;
 
   // Open Edit Account Modal with current values
   const handleOpenEditAccount = () => {
@@ -243,33 +260,92 @@ export default function AccountDetailScreen() {
   };
 
   const handleDeleteAccount = () => {
-    const performDelete = () => {
-      deleteAccountMutation.mutate(account.id, {
-        onSuccess: () => {
-          setShowEditAccountModal(false);
-          router.replace("/(tabs)/accounts");
-        },
-      });
-    };
+    setConfirmModalConfig({
+      visible: true,
+      title: "¿Eliminar cuenta?",
+      message: `¿Estás seguro de que deseas eliminar la cuenta "${account.name}"? Se eliminarán también todas las transacciones asociadas.`,
+      confirmText: "Eliminar cuenta",
+      confirmVariant: "danger",
+      icon: "trash-can-outline",
+      onConfirm: () => {
+        setConfirmModalConfig((prev) => ({ ...prev, loading: true }));
+        deleteAccountMutation.mutate(account.id, {
+          onSuccess: () => {
+            setConfirmModalConfig((prev) => ({
+              ...prev,
+              visible: false,
+              loading: false,
+            }));
+            setShowEditAccountModal(false);
+            router.replace("/(tabs)/accounts");
+          },
+          onError: () => {
+            setConfirmModalConfig((prev) => ({ ...prev, loading: false }));
+          },
+        });
+      },
+    });
+  };
 
-    if (Platform.OS === "web") {
-      if (
-        window.confirm(
-          "¿Seguro que deseas eliminar esta cuenta? Se eliminarán también las transacciones asociadas.",
-        )
-      ) {
-        performDelete();
-      }
-    } else {
-      Alert.alert(
-        "Eliminar cuenta",
-        "¿Seguro que deseas eliminar esta cuenta? Se eliminarán también sus transacciones.",
-        [
-          { text: "Cancelar", style: "cancel" },
-          { text: "Eliminar", style: "destructive", onPress: performDelete },
-        ],
-      );
+  // Ajustar Saldo Handlers
+  const handleOpenAdjustBalance = () => {
+    setAdjustTargetInput(account ? String(account.balance) : "");
+    setAdjustNote("");
+    setShowAdjustModal(true);
+  };
+
+  const handlePromptConfirmAdjust = () => {
+    if (!account) return;
+    const parsedTarget = parseFloat(adjustTargetInput.replace(",", "."));
+    if (isNaN(parsedTarget)) return;
+
+    const currentBalance = account.balance;
+    const diff = parsedTarget - currentBalance;
+
+    if (Math.abs(diff) < 0.001) {
+      setShowAdjustModal(false);
+      return;
     }
+
+    const isIncome = diff > 0;
+    const diffAbs = Math.abs(diff);
+
+    setShowAdjustModal(false);
+    setConfirmModalConfig({
+      visible: true,
+      title: "¿Confirmar ajuste de saldo?",
+      message: `El saldo de "${account.name}" pasará de ${formatCurrency(currentBalance, account.currency)} a ${formatCurrency(parsedTarget, account.currency)}.\n\nSe registrará automáticamente una transacción de ajuste de tipo ${isIncome ? "ingreso" : "gasto"} por ${formatCurrency(diffAbs, account.currency)}.`,
+      confirmText: "Confirmar ajuste",
+      confirmVariant: "primary",
+      icon: "scale-balance",
+      onConfirm: () => {
+        setConfirmModalConfig((prev) => ({ ...prev, loading: true }));
+        createTxMutation.mutate(
+          {
+            accountId: account.id,
+            amount: diffAbs,
+            type: isIncome ? "income" : "expense",
+            categoryId: isIncome ? "cat-other-inc" : "cat-other-exp",
+            description: adjustNote.trim() || "Ajuste de saldo",
+            note: `Saldo anterior: ${formatCurrency(currentBalance, account.currency)} -> Nuevo: ${formatCurrency(parsedTarget, account.currency)}${adjustNote.trim() ? ` • ${adjustNote.trim()}` : ""}`,
+            date: new Date().toISOString().slice(0, 10),
+            currency: account.currency,
+          },
+          {
+            onSuccess: () => {
+              setConfirmModalConfig((prev) => ({
+                ...prev,
+                visible: false,
+                loading: false,
+              }));
+            },
+            onError: () => {
+              setConfirmModalConfig((prev) => ({ ...prev, loading: false }));
+            },
+          },
+        );
+      },
+    });
   };
 
   // Open Transaction Details
@@ -303,30 +379,30 @@ export default function AccountDetailScreen() {
 
   const handleDeleteTx = () => {
     if (!selectedTx) return;
-    const performDelete = () => {
-      deleteTxMutation.mutate(selectedTx.id, {
-        onSuccess: () => setSelectedTx(null),
-      });
-    };
-
-    if (Platform.OS === "web") {
-      if (
-        window.confirm(
-          "¿Eliminar esta transacción? El saldo de la cuenta se recalculará automáticamente.",
-        )
-      ) {
-        performDelete();
-      }
-    } else {
-      Alert.alert(
-        "Eliminar transacción",
-        "¿Eliminar esta transacción? El saldo se actualizará automáticamente.",
-        [
-          { text: "Cancelar", style: "cancel" },
-          { text: "Eliminar", style: "destructive", onPress: performDelete },
-        ],
-      );
-    }
+    setConfirmModalConfig({
+      visible: true,
+      title: "¿Eliminar transacción?",
+      message: `¿Estás seguro de que deseas eliminar "${selectedTx.description}"? El saldo de la cuenta se recalculará automáticamente.`,
+      confirmText: "Eliminar movimiento",
+      confirmVariant: "danger",
+      icon: "trash-can-outline",
+      onConfirm: () => {
+        setConfirmModalConfig((prev) => ({ ...prev, loading: true }));
+        deleteTxMutation.mutate(selectedTx.id, {
+          onSuccess: () => {
+            setConfirmModalConfig((prev) => ({
+              ...prev,
+              visible: false,
+              loading: false,
+            }));
+            setSelectedTx(null);
+          },
+          onError: () => {
+            setConfirmModalConfig((prev) => ({ ...prev, loading: false }));
+          },
+        });
+      },
+    });
   };
 
   return (
@@ -335,11 +411,12 @@ export default function AccountDetailScreen() {
         contentContainerClassName="px-4 py-6 gap-4"
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Barra superior de cuenta ──────────────────────── */}
-        <View className="flex-row items-center justify-between gap-2">
-          <View className="flex-row items-center gap-3 flex-1 min-w-0">
+        {/* ── Encabezado de la cuenta (Fila 1: Info, Fila 2: Acciones) ── */}
+        <View className="gap-3">
+          {/* Fila 1: Ícono, Nombre y Tipo de cuenta */}
+          <View className="flex-row items-center gap-3">
             <View
-              className="w-10 h-10 rounded-2xl items-center justify-center shrink-0"
+              className="w-12 h-12 rounded-2xl items-center justify-center shrink-0"
               style={{ backgroundColor: account.color }}
             >
               <MaterialCommunityIcons
@@ -347,7 +424,7 @@ export default function AccountDetailScreen() {
                   (account.icon as keyof typeof MaterialCommunityIcons.glyphMap) ||
                   "wallet"
                 }
-                size={22}
+                size={24}
                 color={colors.white}
               />
             </View>
@@ -355,7 +432,7 @@ export default function AccountDetailScreen() {
               <Typography variant="h2" numberOfLines={1}>
                 {account.name}
               </Typography>
-              <Typography variant="caption" muted numberOfLines={1}>
+              <Typography variant="caption" muted numberOfLines={1} className="mt-0.5">
                 {account.type === "credit"
                   ? "Tarjeta de Crédito"
                   : account.type === "savings"
@@ -369,10 +446,11 @@ export default function AccountDetailScreen() {
             </View>
           </View>
 
-          <View className="flex-row items-center gap-2 shrink-0">
+          {/* Fila 2: Botones de acción (Compartir, Editar) */}
+          <View className="flex-row items-center gap-2">
             <Pressable
               onPress={() => setShowShareModal(true)}
-              className="flex-row items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary-500/15 active:opacity-80"
+              className="flex-1 flex-row items-center justify-center gap-2 py-2 px-3 rounded-xl bg-primary-500/15 border border-primary-500/20 active:opacity-80"
             >
               <MaterialCommunityIcons
                 name="account-multiple"
@@ -391,7 +469,7 @@ export default function AccountDetailScreen() {
 
             <Pressable
               onPress={handleOpenEditAccount}
-              className="flex-row items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-700/80 active:bg-surface-600"
+              className="flex-1 flex-row items-center justify-center gap-2 py-2 px-3 rounded-xl bg-surface-700/80 border border-surface-600/50 active:bg-surface-600"
             >
               <MaterialCommunityIcons
                 name="pencil"
@@ -423,13 +501,18 @@ export default function AccountDetailScreen() {
                     size={14}
                     color={colors.primary[500]}
                   />
-                  <Typography variant="caption" className="text-xs font-medium text-text-secondary">
-                    + {formatCurrency(futureInstallmentsDebt, account.currency)} en cuotas futuras
+                  <Typography
+                    variant="caption"
+                    className="text-xs font-medium text-text-secondary"
+                  >
+                    + {formatCurrency(futureInstallmentsDebt, account.currency)}{" "}
+                    en cuotas futuras
                   </Typography>
                 </View>
               )}
               <Typography variant="caption" muted className="mt-0.5">
-                de {formatCurrency(limit, account.currency)} de límite ({usagePercent}% comprometido)
+                de {formatCurrency(limit, account.currency)} de límite (
+                {usagePercent}% comprometido)
               </Typography>
             </View>
 
@@ -449,8 +532,13 @@ export default function AccountDetailScreen() {
                   />
                 </View>
                 <View className="flex-row justify-between">
-                  <Typography variant="caption" muted className="font-semibold text-text-primary">
-                    Disponible real: {formatCurrency(available, account.currency)}
+                  <Typography
+                    variant="caption"
+                    muted
+                    className="font-semibold text-text-primary"
+                  >
+                    Disponible real:{" "}
+                    {formatCurrency(available, account.currency)}
                   </Typography>
                   <Typography variant="caption" muted>
                     Límite: {formatCurrency(limit, account.currency)}
@@ -499,9 +587,22 @@ export default function AccountDetailScreen() {
             )}
 
             {/* Acciones rápidas de tarjeta */}
-            <View className="flex-row gap-3 pt-1">
+            <View className="flex-row gap-2 pt-1">
               <Button
-                title="+ Registrar gasto"
+                title="Ajustar"
+                size="sm"
+                variant="secondary"
+                icon={
+                  <MaterialCommunityIcons
+                    name="scale-balance"
+                    size={15}
+                    color={colors.text.primary}
+                  />
+                }
+                onPress={handleOpenAdjustBalance}
+              />
+              <Button
+                title="+ Gasto"
                 size="sm"
                 variant="secondary"
                 className="flex-1"
@@ -526,7 +627,7 @@ export default function AccountDetailScreen() {
             </View>
           </Card>
         ) : (
-          <Card className="items-center gap-2">
+          <Card className="items-center gap-3">
             <Typography variant="label">Balance actual</Typography>
             <Typography
               className={`text-3xl font-bold ${
@@ -535,7 +636,39 @@ export default function AccountDetailScreen() {
             >
               {formatCurrency(account.balance, account.currency)}
             </Typography>
-            <Typography variant="caption">{account.currency}</Typography>
+            <View className="flex-row items-center gap-2 pt-1">
+              <Button
+                title="Ajustar saldo"
+                size="sm"
+                variant="secondary"
+                icon={
+                  <MaterialCommunityIcons
+                    name="scale-balance"
+                    size={16}
+                    color={colors.text.primary}
+                  />
+                }
+                onPress={handleOpenAdjustBalance}
+              />
+              <Button
+                title="Movimiento"
+                size="sm"
+                variant="primary"
+                icon={
+                  <MaterialCommunityIcons
+                    name="plus"
+                    size={16}
+                    color={colors.white}
+                  />
+                }
+                onPress={() =>
+                  router.push({
+                    pathname: "/transaction/new",
+                    params: { accountId: id },
+                  })
+                }
+              />
+            </View>
           </Card>
         )}
 
@@ -571,7 +704,8 @@ export default function AccountDetailScreen() {
                     : "text-text-secondary"
                 }`}
               >
-                Cuotas ({installmentsList.filter((i) => i.status === "active").length})
+                Cuotas (
+                {installmentsList.filter((i) => i.status === "active").length})
               </Typography>
             </Pressable>
             <Pressable
@@ -721,15 +855,21 @@ export default function AccountDetailScreen() {
                           {inst.description}
                         </Typography>
                         <Typography variant="caption" muted className="mt-0.5">
-                          Inicio: {formatDate(inst.firstDueDate)} • Cuota {paid} de {total}
+                          Inicio: {formatDate(inst.firstDueDate)} • Cuota {paid}{" "}
+                          de {total}
                         </Typography>
                       </View>
                       <View className="items-end">
                         <Typography className="font-bold text-sm text-text-primary">
-                          {formatCurrency(inst.installmentAmount, account.currency)}/mes
+                          {formatCurrency(
+                            inst.installmentAmount,
+                            account.currency,
+                          )}
+                          /mes
                         </Typography>
                         <Typography variant="caption" muted>
-                          Total: {formatCurrency(inst.totalAmount, account.currency)}
+                          Total:{" "}
+                          {formatCurrency(inst.totalAmount, account.currency)}
                         </Typography>
                       </View>
                     </View>
@@ -743,14 +883,25 @@ export default function AccountDetailScreen() {
                         />
                       </View>
                       <View className="flex-row justify-between">
-                        <Typography variant="caption" muted className="text-[11px]">
-                          {paid} pagada{paid > 1 ? "s" : ""} ({progressPercent}%)
+                        <Typography
+                          variant="caption"
+                          muted
+                          className="text-[11px]"
+                        >
+                          {paid} pagada{paid > 1 ? "s" : ""} ({progressPercent}
+                          %)
                         </Typography>
-                        <Typography variant="caption" muted className="text-[11px]">
-                          Resta: {formatCurrency(
+                        <Typography
+                          variant="caption"
+                          muted
+                          className="text-[11px]"
+                        >
+                          Resta:{" "}
+                          {formatCurrency(
                             inst.remainingAmountCents
                               ? inst.remainingAmountCents / 100
-                              : inst.totalAmount - inst.installmentAmount * paid,
+                              : inst.totalAmount -
+                                  inst.installmentAmount * paid,
                             account.currency,
                           )}
                         </Typography>
@@ -766,7 +917,9 @@ export default function AccountDetailScreen() {
                           color="#f79009"
                         />
                         <Typography className="text-xs text-warning-500 font-medium">
-                          Precio contado: {formatCurrency(inst.cashPrice, account.currency)} • Recargo: +{formatCurrency(interest, account.currency)}
+                          Precio contado:{" "}
+                          {formatCurrency(inst.cashPrice, account.currency)} •
+                          Recargo: +{formatCurrency(interest, account.currency)}
                         </Typography>
                       </View>
                     )}
@@ -809,7 +962,8 @@ export default function AccountDetailScreen() {
               <ActivityIndicator color={colors.primary[500]} />
             ) : statementsList.length === 0 ? (
               <Typography variant="caption" muted className="text-center py-8">
-                No hay resúmenes generados aún. Toca &quot;Cerrar período&quot; para registrar el snapshot.
+                No hay resúmenes generados aún. Toca &quot;Cerrar período&quot;
+                para registrar el snapshot.
               </Typography>
             ) : (
               statementsList.map((stmt) => {
@@ -864,7 +1018,11 @@ export default function AccountDetailScreen() {
 
                     <View className="flex-row justify-between pt-2 border-t border-surface-600/40">
                       <View>
-                        <Typography variant="caption" muted className="text-[11px]">
+                        <Typography
+                          variant="caption"
+                          muted
+                          className="text-[11px]"
+                        >
                           Total a pagar
                         </Typography>
                         <Typography className="font-bold text-base text-text-primary">
@@ -872,7 +1030,11 @@ export default function AccountDetailScreen() {
                         </Typography>
                       </View>
                       <View className="items-center">
-                        <Typography variant="caption" muted className="text-[11px]">
+                        <Typography
+                          variant="caption"
+                          muted
+                          className="text-[11px]"
+                        >
                           Pago mínimo
                         </Typography>
                         <Typography className="font-medium text-sm text-text-secondary">
@@ -880,7 +1042,11 @@ export default function AccountDetailScreen() {
                         </Typography>
                       </View>
                       <View className="items-end">
-                        <Typography variant="caption" muted className="text-[11px]">
+                        <Typography
+                          variant="caption"
+                          muted
+                          className="text-[11px]"
+                        >
                           Saldo impago
                         </Typography>
                         <Typography
@@ -1006,7 +1172,11 @@ export default function AccountDetailScreen() {
                       size={13}
                       color={colors.primary[500]}
                     />
-                    <Typography variant="caption" muted className="text-[11px] flex-1">
+                    <Typography
+                      variant="caption"
+                      muted
+                      className="text-[11px] flex-1"
+                    >
                       Te avisaremos 1 día antes del cierre y del vencimiento.
                     </Typography>
                   </View>
@@ -1286,9 +1456,7 @@ export default function AccountDetailScreen() {
                             <Typography
                               variant="caption"
                               className={`text-[10px] ${
-                                isSelected
-                                  ? "text-white/80"
-                                  : "text-text-muted"
+                                isSelected ? "text-white/80" : "text-text-muted"
                               }`}
                             >
                               {formatCurrency(
@@ -1322,6 +1490,180 @@ export default function AccountDetailScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* ── Modal: Ajustar Saldo ────────────────────────────── */}
+      <Modal
+        visible={showAdjustModal}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setShowAdjustModal(false)}
+      >
+        <Pressable
+          onPress={() => setShowAdjustModal(false)}
+          className="flex-1 bg-black/60 items-center justify-center p-4"
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            className="w-full max-w-sm bg-surface-800 rounded-3xl p-6 border border-surface-600/70 shadow-2xl gap-4"
+          >
+            <View className="flex-row items-center gap-3">
+              <View className="w-10 h-10 rounded-2xl bg-primary-600/15 items-center justify-center shrink-0">
+                <MaterialCommunityIcons
+                  name="scale-balance"
+                  size={22}
+                  color={colors.primary[600]}
+                />
+              </View>
+              <View className="flex-1">
+                <Typography variant="h3">Ajustar Saldo</Typography>
+                <Typography variant="caption" muted numberOfLines={1}>
+                  {account.name}
+                </Typography>
+              </View>
+            </View>
+
+            {/* Saldo actual registrado */}
+            <View className="bg-surface-700/60 p-3 rounded-2xl gap-0.5">
+              <Typography variant="caption" muted className="text-[11px]">
+                Saldo registrado actualmente
+              </Typography>
+              <Typography className="text-base font-bold text-text-primary">
+                {formatCurrency(account.balance, account.currency)}
+              </Typography>
+            </View>
+
+            {/* Input nuevo saldo real */}
+            <View className="gap-1.5">
+              <Typography variant="label" className="text-xs">
+                Nuevo saldo real
+              </Typography>
+              <TextInput
+                value={adjustTargetInput}
+                onChangeText={setAdjustTargetInput}
+                placeholder="0"
+                keyboardType="numeric"
+                className="bg-surface-700 text-text-primary px-4 py-3 rounded-2xl text-lg font-bold border border-surface-600/50"
+                placeholderTextColor={colors.text.muted}
+                autoFocus
+              />
+            </View>
+
+            {/* Diferencia en vivo */}
+            {(() => {
+              const parsed = parseFloat(adjustTargetInput.replace(",", "."));
+              if (isNaN(parsed)) return null;
+              const diff = parsed - account.balance;
+              const isInc = diff > 0;
+              const isZero = Math.abs(diff) < 0.001;
+
+              return (
+                <View
+                  className={`p-2.5 rounded-xl border flex-row items-center gap-2 ${
+                    isZero
+                      ? "bg-surface-700/40 border-surface-600/40"
+                      : isInc
+                        ? "bg-success-500/10 border-success-500/25"
+                        : "bg-danger-500/10 border-danger-500/25"
+                  }`}
+                >
+                  <MaterialCommunityIcons
+                    name={
+                      isZero
+                        ? "information-outline"
+                        : isInc
+                          ? "arrow-up-circle-outline"
+                          : "arrow-down-circle-outline"
+                    }
+                    size={18}
+                    color={
+                      isZero
+                        ? colors.text.secondary
+                        : isInc
+                          ? "#17b26a"
+                          : "#f04438"
+                    }
+                  />
+                  <View className="flex-1">
+                    <Typography
+                      className={`text-xs font-semibold ${
+                        isZero
+                          ? "text-text-secondary"
+                          : isInc
+                            ? "text-success-500"
+                            : "text-danger-500"
+                      }`}
+                    >
+                      {isZero
+                        ? "Sin diferencia"
+                        : `${isInc ? "+" : "-"}${formatCurrency(Math.abs(diff), account.currency)}`}
+                    </Typography>
+                    <Typography variant="caption" muted className="text-[10px]">
+                      {isZero
+                        ? "El saldo no cambiará"
+                        : `Se registrará como ${isInc ? "ingreso" : "gasto"} por ajuste`}
+                    </Typography>
+                  </View>
+                </View>
+              );
+            })()}
+
+            {/* Motivo opcional */}
+            <View className="gap-1.5">
+              <Typography variant="label" className="text-xs">
+                Motivo / Detalle (opcional)
+              </Typography>
+              <TextInput
+                value={adjustNote}
+                onChangeText={setAdjustNote}
+                placeholder="Ej. Arqueo de caja, conciliación bancaria..."
+                className="bg-surface-700 text-text-primary px-3.5 py-2.5 rounded-xl text-xs border border-surface-600/50"
+                placeholderTextColor={colors.text.muted}
+              />
+            </View>
+
+            {/* Botones */}
+            <View className="flex-row gap-3 pt-2">
+              <Button
+                title="Cancelar"
+                variant="secondary"
+                className="flex-1"
+                onPress={() => setShowAdjustModal(false)}
+              />
+              <Button
+                title="Continuar"
+                variant="primary"
+                className="flex-1"
+                disabled={(() => {
+                  const parsed = parseFloat(
+                    adjustTargetInput.replace(",", "."),
+                  );
+                  return (
+                    isNaN(parsed) || Math.abs(parsed - account.balance) < 0.001
+                  );
+                })()}
+                onPress={handlePromptConfirmAdjust}
+              />
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ── Modal de Confirmación Unificado ────────────────── */}
+      <ConfirmModal
+        visible={confirmModalConfig.visible}
+        title={confirmModalConfig.title}
+        message={confirmModalConfig.message}
+        confirmText={confirmModalConfig.confirmText}
+        cancelText={confirmModalConfig.cancelText}
+        confirmVariant={confirmModalConfig.confirmVariant}
+        icon={confirmModalConfig.icon}
+        loading={confirmModalConfig.loading}
+        onConfirm={confirmModalConfig.onConfirm}
+        onCancel={() =>
+          setConfirmModalConfig((prev) => ({ ...prev, visible: false }))
+        }
+      />
     </SafeAreaView>
   );
 }

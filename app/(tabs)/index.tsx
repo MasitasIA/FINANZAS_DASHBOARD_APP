@@ -17,6 +17,7 @@ import { signOut } from "firebase/auth";
 import { Button, Card, ThemeToggle, Typography } from "@/components/ui";
 import { AccountCard } from "@/components/accounts/AccountCard";
 import { GoalCard } from "@/components/goals/GoalCard";
+import { UserProfileModal } from "@/components/user/UserProfileModal";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useGoals, useSystemStats } from "@/hooks/useGoals";
 import { useRecurringExpenses } from "@/hooks/useRecurringExpenses";
@@ -56,6 +57,7 @@ function formatBytes(bytes: number): string {
 
 export default function DashboardScreen() {
   const { colors } = useAppTheme();
+  const [showProfileModal, setShowProfileModal] = useState(false);
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
@@ -322,12 +324,23 @@ export default function DashboardScreen() {
         <View className="pt-6 pb-6">
           {auth.currentUser && (
             <View className="flex-row items-center justify-between mb-4 bg-surface-800 border border-surface-600/60 px-3.5 py-2 rounded-2xl">
-              <View className="flex-row items-center gap-2 flex-1 mr-2">
-                <MaterialCommunityIcons
-                  name="account-circle-outline"
-                  size={20}
-                  color={colors.primary[600]}
-                />
+              <Pressable
+                onPress={() => setShowProfileModal(true)}
+                className="flex-row items-center gap-2 flex-1 mr-2 active:opacity-70 py-0.5"
+                accessibilityLabel="Ver perfil de usuario"
+              >
+                {auth.currentUser.photoURL ? (
+                  <Image
+                    source={{ uri: auth.currentUser.photoURL }}
+                    className="w-6 h-6 rounded-full"
+                  />
+                ) : (
+                  <MaterialCommunityIcons
+                    name="account-circle-outline"
+                    size={22}
+                    color={colors.primary[600]}
+                  />
+                )}
                 <Typography
                   variant="caption"
                   numberOfLines={1}
@@ -335,7 +348,12 @@ export default function DashboardScreen() {
                 >
                   {auth.currentUser.displayName || auth.currentUser.email}
                 </Typography>
-              </View>
+                <MaterialCommunityIcons
+                  name="chevron-right"
+                  size={16}
+                  color={colors.text.muted}
+                />
+              </Pressable>
               <View className="flex-row items-center gap-1.5">
                 <ThemeToggle variant="icon" />
                 <Pressable
@@ -949,6 +967,17 @@ export default function DashboardScreen() {
           </Typography>
         </Pressable>
       </ScrollView>
+
+      {/* ── Modal: Perfil del Usuario ────────────────────────── */}
+      <UserProfileModal
+        visible={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+        totalAccounts={accounts.length}
+        totalTransactions={transactionsData?.total ?? transactions.length}
+        totalGoals={goals.length}
+        totalBudgets={budgets.length}
+        totalRecurring={recurringExpenses.length}
+      />
 
       {/* ── Modal: Información de la app y estado de D1 ────── */}
       <Modal

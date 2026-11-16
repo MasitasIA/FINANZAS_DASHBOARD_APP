@@ -1,9 +1,7 @@
 import { useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   TextInput,
@@ -16,6 +14,7 @@ import {
   Button,
   Card,
   ColorPicker,
+  ConfirmModal,
   IconPicker,
   Typography,
 } from "@/components/ui";
@@ -113,6 +112,24 @@ export default function GoalDetailScreen() {
   const [activeModal, setActiveModal] = useState<
     "contribute" | "withdraw" | "edit" | null
   >(null);
+
+  // Modal de confirmación unificado
+  const [confirmConfig, setConfirmConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    cancelText?: string;
+    confirmVariant?: "primary" | "danger" | "warning";
+    icon?: keyof typeof MaterialCommunityIcons.glyphMap;
+    loading?: boolean;
+    onConfirm: () => void;
+  }>({
+    visible: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+  });
 
   // Formulario Aporte / Retiro
   const [modalAmount, setModalAmount] = useState("");
@@ -269,28 +286,26 @@ export default function GoalDetailScreen() {
 
   // Confirmar Eliminación
   const handleDelete = () => {
-    const executeDelete = () => {
-      deleteGoal(goal.id, {
-        onSuccess: () => router.back(),
-      });
-    };
-
-    if (Platform.OS === "web") {
-      if (
-        confirm(`¿Estás seguro de que deseas eliminar la meta "${goal.name}"?`)
-      ) {
-        executeDelete();
-      }
-    } else {
-      Alert.alert(
-        "Eliminar meta",
-        `¿Estás seguro de que deseas eliminar la meta "${goal.name}"?`,
-        [
-          { text: "Cancelar", style: "cancel" },
-          { text: "Eliminar", style: "destructive", onPress: executeDelete },
-        ],
-      );
-    }
+    setConfirmConfig({
+      visible: true,
+      title: "¿Eliminar meta de ahorro?",
+      message: `¿Estás seguro de que deseas eliminar la meta "${goal.name}"? Los fondos que hayas registrado permanecerán en tus cuentas.`,
+      confirmText: "Eliminar meta",
+      confirmVariant: "danger",
+      icon: "trash-can-outline",
+      onConfirm: () => {
+        setConfirmConfig((prev) => ({ ...prev, loading: true }));
+        deleteGoal(goal.id, {
+          onSuccess: () => {
+            setConfirmConfig((prev) => ({ ...prev, visible: false, loading: false }));
+            router.back();
+          },
+          onError: () => {
+            setConfirmConfig((prev) => ({ ...prev, loading: false }));
+          },
+        });
+      },
+    });
   };
 
   // Eliminar movimiento individual de la meta (revierte saldo en meta y cuenta)
@@ -299,22 +314,27 @@ export default function GoalDetailScreen() {
       tx.type === "income" && tx.categoryId === "cat-savings"
     );
     const label = isDeposit ? "aporte" : "retiro";
-    const msg = `¿Eliminar este ${label} de ${formatCurrency(tx.amount, tx.currency)}? Se revertirá automáticamente el saldo en la meta.`;
+    const msg = `¿Eliminar este ${label} de ${formatCurrency(tx.amount, tx.currency)}? Se revertirá automáticamente el saldo acumulado en la meta.`;
 
-    if (Platform.OS === "web") {
-      if (window.confirm(msg)) {
-        deleteTx(tx.id);
-      }
-    } else {
-      Alert.alert(`Eliminar ${label}`, msg, [
-        { text: "Cancelar", style: "cancel" },
-        {
-          text: "Eliminar",
-          style: "destructive",
-          onPress: () => deleteTx(tx.id),
-        },
-      ]);
-    }
+    setConfirmConfig({
+      visible: true,
+      title: `¿Eliminar ${label}?`,
+      message: msg,
+      confirmText: "Eliminar",
+      confirmVariant: "danger",
+      icon: "trash-can-outline",
+      onConfirm: () => {
+        setConfirmConfig((prev) => ({ ...prev, loading: true }));
+        deleteTx(tx.id, {
+          onSuccess: () => {
+            setConfirmConfig((prev) => ({ ...prev, visible: false, loading: false }));
+          },
+          onError: () => {
+            setConfirmConfig((prev) => ({ ...prev, loading: false }));
+          },
+        });
+      },
+    });
   };
 
   return (
@@ -1237,6 +1257,22 @@ export default function GoalDetailScreen() {
           </ScrollView>
         </View>
       </Modal>
+
+      {/* ── Modal de Confirmación Unificado ────────────────── */}
+      <ConfirmModal
+        visible={confirmConfig.visible}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        confirmText={confirmConfig.confirmText}
+        cancelText={confirmConfig.cancelText}
+        confirmVariant={confirmConfig.confirmVariant}
+        icon={confirmConfig.icon}
+        loading={confirmConfig.loading}
+        onConfirm={confirmConfig.onConfirm}
+        onCancel={() =>
+          setConfirmConfig((prev) => ({ ...prev, visible: false }))
+        }
+      />
     </SafeAreaView>
   );
 }
